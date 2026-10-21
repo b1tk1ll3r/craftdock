@@ -10,25 +10,34 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const prepareScript = `BM="$1"; PV="$2"; SECRET="$3"; FP="$4"; ONL="$5"
+// prepareScript runs as root (exec or helper container). Everything it creates
+// must belong to the server user, otherwise the server (uid 1000 by default)
+// cannot write into e.g. /data/plugins afterwards.
+const prepareScript = `BM="$1"; PV="$2"; SECRET="$3"; FP="$4"; ONL="$5"; OWN="${6:-1000:1000}"
+mkd() {
+  d="$1"; mkdir -p "$d"
+  while [ "$d" != "/data" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do chown "$OWN" "$d" 2>/dev/null; d=$(dirname "$d"); done
+  chown "$OWN" /data 2>/dev/null
+}
 if [ -n "$BM" ]; then
-  f="/data/$BM"; mkdir -p "$(dirname "$f")"
+  f="/data/$BM"; mkd "$(dirname "$f")"
   if [ -f "$f" ]; then
     sed -i 's/^\( *\)accept-download: *false/\1accept-download: true/' "$f"
   else
     printf '%s\n' '# Angelegt von CraftDock: Download der Minecraft-Client-Ressourcen akzeptiert.' \
       'accept-download: true' 'data: "bluemap"' 'render-thread-count: 1' 'scan-for-mod-resources: true' 'metrics: false' > "$f"
   fi
-  chown -R 1000:1000 "$(dirname "$f")" 2>/dev/null || true
+  chown -R "$OWN" "$(dirname "$f")" 2>/dev/null
 fi
 if [ -n "$PV" ]; then
-  f=/data/config/paper-global.yml; mkdir -p /data/config
+  f=/data/config/paper-global.yml; mkd /data/config
   EN=false; [ "$PV" = on ] && EN=true
   if [ ! -f "$f" ]; then
     if [ "$PV" = on ]; then
@@ -45,13 +54,13 @@ if [ -n "$PV" ]; then
       inv && /^    secret:/ { if (en == "true") print "    secret: '"'"'" s "'"'"'"; else print; next }
       {print}' "$f" > "$f.tmp" && cat "$f.tmp" > "$f" && rm -f "$f.tmp"
   fi
-  [ -f "$f" ] && chown 1000:1000 "$f" 2>/dev/null
+  [ -f "$f" ] && chown "$OWN" "$f" 2>/dev/null
 fi
 if [ -n "$FP" ]; then
-  f=/data/config/FabricProxy-Lite.toml; mkdir -p /data/config
+  f=/data/config/FabricProxy-Lite.toml; mkd /data/config
   [ -f "$f" ] || printf 'hackOnlineMode = true\nhackEarlySend = false\nhackMessageChain = true\ndisconnectMessage = "Bitte verbinde dich ueber das Netzwerk."\nsecret = ""\n' > "$f"
   sed -i "s/^secret = .*/secret = \"$SECRET\"/" "$f"
-  chown -R 1000:1000 /data/config 2>/dev/null || true
+  chown "$OWN" "$f" 2>/dev/null
 fi
 true`
 
@@ -66,7 +75,7 @@ func (m *Manager) runPrepare(ctx context.Context, id string, running bool, cfg S
 		online = "false"
 	}
 	c := &ContainerSummary{ID: id, Image: cfg.Image(), State: state, Labels: map[string]string{labelConfig: mustJSON(cfg)}}
-	_, err := m.runInServer(ctx, c, prepareScript, bm, pv, proxySecretValue(), fp, online)
+	_, err := m.runInServer(ctx, c, prepareScript, bm, pv, proxySecretValue(), fp, online, cfg.owner())
 	return err
 }
 
@@ -213,3 +222,17 @@ func (a *API) mapProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	rp.ServeHTTP(w, r)
 }
+
+// owner is the uid:gid the server runs as (itzg UID/GID, default 1000:1000).
+func (c *ServerConfig) owner() string {
+	uid, gid := c.ExtraEnv["UID"], c.ExtraEnv["GID"]
+	if uid == "" || !numRe.MatchString(uid) {
+		uid = "1000"
+	}
+	if gid == "" || !numRe.MatchString(gid) {
+		gid = "1000"
+	}
+	return uid + ":" + gid
+}
+
+var numRe = regexp.MustCompile(`^[0-9]{1,10}$`)
