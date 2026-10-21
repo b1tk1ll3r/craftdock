@@ -1,0 +1,4 @@
+/craftdock
+/data/
+*.tar.gz
+.env

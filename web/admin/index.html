@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>CraftDock</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 29 9.5v13L16 30 3 22.5v-13z' fill='%234cc38a'/%3E%3Cpath d='M16 16 3 9.5M16 16l13-6.5M16 16v14' stroke='%230b0e13' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div id="boot" class="boot"><div class="spinner lg"></div></div>
+
+  <div id="login" class="login hidden">
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <div class="brand brand-lg"><span class="logo"></span><span>CraftDock</span></div>
+      <p class="muted">Minecraft-Server auf Docker verwalten</p>
+      <label class="field"><span>Benutzername</span><input name="username" autocomplete="username" required value="admin"></label>
+      <label class="field"><span>Passwort</span><input name="password" type="password" autocomplete="current-password" required autofocus></label>
+      <div id="loginError" class="form-error hidden"></div>
+      <button class="btn primary block" type="submit">Anmelden</button>
+    </form>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="logo"></span><span>CraftDock</span></div>
+      <button id="btnNew" class="btn primary block" type="button"></button>
+      <div class="side-label"><span>Server</span><span id="serverCount" class="count"></span></div>
+      <nav id="serverList" class="server-list"></nav>
+      <nav id="sideNav" class="side-nav"></nav>
+      <div class="side-foot">
+        <div id="hostInfo" class="host-info"></div>
+        <div class="foot-btns"><button id="btnAccount" class="btn ghost sm" type="button"></button><button id="btnLogout" class="btn ghost sm" type="button"></button></div>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+    <main id="main" class="main"></main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toasts" class="toasts"></div>
+</body>
+</html>
