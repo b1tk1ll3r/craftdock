@@ -92,44 +92,6 @@ func (m *Manager) PlayerData(ctx context.Context, name string) (PlayerData, erro
 	return pd, nil
 }
 
-var playerActions = map[string]string{
-	"kick":             "kick %s",
-	"ban":              "ban %s",
-	"pardon":           "pardon %s",
-	"op":               "op %s",
-	"deop":             "deop %s",
-	"whitelist-add":    "whitelist add %s",
-	"whitelist-remove": "whitelist remove %s",
-	"whitelist-on":     "whitelist on",
-	"whitelist-off":    "whitelist off",
-}
-
-func (m *Manager) PlayerAction(ctx context.Context, name, action, player, reason string) (string, error) {
-	tmpl, ok := playerActions[action]
-	if !ok {
-		return "", badRequest("Unbekannte Aktion %q", action)
-	}
-	cmd := tmpl
-	if strings.Contains(tmpl, "%s") {
-		if !playerRe.MatchString(player) {
-			return "", badRequest("Ungültiger Spielername")
-		}
-		cmd = strings.Replace(tmpl, "%s", player, 1)
-		reason = strings.TrimSpace(strings.NewReplacer("\n", " ", "\r", " ", "§", "").Replace(reason))
-		if len(reason) > 200 {
-			reason = reason[:200]
-		}
-		if reason != "" && (action == "kick" || action == "ban") {
-			cmd += " " + reason
-		}
-	}
-	id, err := m.runningContainer(ctx, name)
-	if err != nil {
-		return "", &APIError{http.StatusConflict, "Spieleraktionen gehen nur bei laufendem Server"}
-	}
-	return m.rcon(ctx, id, cmd)
-}
-
 func (a *API) playerData(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := ctxT(r, 20*time.Second)
 	defer cancel()
@@ -142,17 +104,28 @@ func (a *API) playerData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) playerAction(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Action, Player, Reason string }
+	var in PlayerActionInput
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
 		return
 	}
 	ctx, cancel := ctxT(r, 20*time.Second)
 	defer cancel()
-	out, err := a.m.PlayerAction(ctx, r.PathValue("name"), in.Action, in.Player, in.Reason)
+	out, err := a.m.PlayerAction(ctx, r.PathValue("name"), in)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]string{"output": out})
+}
+
+func (a *API) playerInfo(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := ctxT(r, 20*time.Second)
+	defer cancel()
+	info, err := a.m.PlayerInfo(ctx, r.PathValue("name"), r.URL.Query().Get("player"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, info)
 }

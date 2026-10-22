@@ -111,7 +111,7 @@ const SECTIONS = [
   { id: 'network', title: 'Netzwerk', desc: 'Erreichbarkeit von außen', fields: [
     { k: 'port', label: 'Host-Port', type: 'number', min: 1, max: 65535, hint: 'Port, unter dem Spieler verbinden (Standard 25565)' },
     { k: 'onlineMode', label: 'Online-Modus', type: 'toggle', hint: 'Mojang/Microsoft-Konten prüfen (empfohlen)' },
-    { k: 'proxyMember', label: 'Im Velocity-Netzwerk', type: 'toggle', full: true, types: PROXY_TYPES, hint: 'Nur über den Proxy erreichbar (Host-Port wird nicht veröffentlicht, Online-Modus prüft der Proxy). Wechsel im Spiel mit /server <name>.' },
+    { k: 'network', label: 'Velocity-Netzwerk', type: 'netselect', full: true, types: PROXY_TYPES, hint: 'Im Netzwerk ist der Server nur über den Proxy erreichbar (der Host-Port wird nicht veröffentlicht, die Anmeldung prüft der Proxy). Wechsel im Spiel mit /server <name>. Ein Server kann nur in einem Netzwerk sein.' },
   ] },
   { id: 'gameplay', title: 'Gameplay', desc: 'Spielregeln für alle Spieler', fields: [
     { k: 'gamemode', label: 'Spielmodus', type: 'select', options: [['survival', 'Überleben'], ['creative', 'Kreativ'], ['adventure', 'Abenteuer'], ['spectator', 'Zuschauer']] },
@@ -162,7 +162,7 @@ const DEFAULTS = {
   seed: '', levelType: '', ops: '', whitelist: '', enforceWhitelist: false, memory: '4G', memoryLimitMB: 0,
   cpus: 0, restartPolicy: 'unless-stopped', modrinthProjects: '', icon: '', dataPath: '', extraEnv: {}, ports: [],
   modpack: '', cfApiKey: '', publicHidden: false, displayName: '', description: '', publicAddress: '',
-  idleMode: '', idleMinutes: 10, map: false, mapPort: 0, proxyMember: false,
+  idleMode: '', idleMinutes: 10, map: false, mapPort: 0, network: '',
 };
 
 /* ---------- State ---------- */
@@ -246,6 +246,14 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
 }
 function versionLabel(c) { return c.version === 'LATEST' ? 'neueste' : c.version === 'SNAPSHOT' ? 'Snapshot' : c.version; }
+/** Version shown for a server: the one that really runs (if known), else the configured one. */
+function runVersion(s) { return s.gameVersion || versionLabel(s.config); }
+function versionDetail(s) {
+  const c = s.config;
+  if (!s.gameVersion) return c.version === 'LATEST' ? 'neueste – wird beim Start ermittelt' : versionLabel(c);
+  return c.version === 'LATEST' || c.version === 'SNAPSHOT' ? `${s.gameVersion} (eingestellt: ${versionLabel(c)})` : s.gameVersion;
+}
+const netName = (id) => { const n = (state.networks || []).find((x) => x.id === id); return n ? (n.name || n.id) : id; };
 function hostAddr(port) { return port === 25565 ? location.hostname : `${location.hostname}:${port}`; }
 function phaseLabel(s) {
   if (s.phase === 'busy' && s.task) return TASKS[s.task.action] || 'Beschäftigt';
@@ -307,6 +315,7 @@ async function showApp(me) {
   $('#login').classList.add('hidden');
   $('#app').classList.remove('hidden');
   loadInfo();
+  loadNetworks().then(() => { renderSidebar(); updateHeader(true); });
   api('GET', '/api/versions').then((v) => { state.versions = v; fillVersionLists(); }).catch(() => {});
   state.booted = false;
   await poll();
@@ -426,7 +435,7 @@ function renderSidebar() {
     const c = s.config, t = typeOf(c.type);
     return `<button class="srv-item ${s.name === state.selected && !state.page ? 'active' : ''}" data-name="${esc(s.name)}" title="${esc(phaseLabel(s))}">
       <span class="dot ${phaseClass(s)}"></span>
-      <span class="meta"><span class="nm">${esc(s.name)}</span><span class="sub">${esc(t.label)} ${esc(versionLabel(c))} · ${c.proxyMember ? 'Netzwerk' : ':' + c.port}</span></span>
+      <span class="meta"><span class="nm">${esc(s.name)}</span><span class="sub">${esc(t.label)} ${esc(runVersion(s))} · ${c.network ? esc(netName(c.network)) : ':' + c.port}</span></span>
     </button>`;
   }).join('');
   $$('.srv-item', list).forEach((b) => b.addEventListener('click', () => select(b.dataset.name, state.selected === b.dataset.name ? state.tab : 'overview')));
@@ -491,7 +500,7 @@ function updateHeader(force) {
   const s = current();
   if (!s || !$('#hdPill')) return;
   const c = s.config, t = typeOf(c.type);
-  const key = JSON.stringify([s.phase, s.task, c, s.health, s.containerId]);
+  const key = JSON.stringify([s.phase, s.task, c, s.health, s.containerId, s.gameVersion, (state.networks || []).length]);
   if (!force && $('#main').dataset.hk === key) return;
   $('#main').dataset.hk = key;
 
@@ -499,8 +508,8 @@ function updateHeader(force) {
   $('#hdPill').innerHTML = `<span class="pill ${phaseClass(s)}"><span class="dot ${phaseClass(s)}"></span>${esc(phaseLabel(s))}</span>`;
   $('#hdChips').innerHTML = [
     `<span class="chip">${icon('box')}${esc(t.label)}</span>`,
-    `<span class="chip">Version ${esc(versionLabel(c))}</span>`,
-    c.proxyMember ? `<span class="chip">${icon('network')}Velocity-Netzwerk</span>` : `<span class="chip">${icon('globe')}Port ${c.port}</span>`,
+    `<span class="chip" title="${esc(versionDetail(s))}">Minecraft ${esc(runVersion(s))}</span>`,
+    c.network ? `<span class="chip">${icon('network')}${esc(netName(c.network))}</span>` : `<span class="chip">${icon('globe')}Port ${c.port}</span>`,
     c.map ? `<span class="chip">${icon('map')}Live-Karte</span>` : '',
     c.idleMode ? `<span class="chip">${icon('moon')}${c.idleMode === 'pause' ? 'Auto-Pause' : 'Auto-Stopp'} ${c.idleMinutes} Min</span>` : '',
     `<span class="chip">${icon('memory')}${esc(c.memory)}</span>`,
@@ -652,7 +661,7 @@ function renderOverview(body) {
             <div class="address"><span class="a">${esc(hostAddr(c.port))}</span><button class="btn sm" id="ovCopy">${icon('copy')}Kopieren</button></div>
             <dl class="kv">
               <dt>Plattform</dt><dd>${esc(typeOf(c.type).label)}</dd>
-              <dt>Version</dt><dd>${esc(c.version)}</dd>
+              <dt>Version</dt><dd>${esc(versionDetail(s))}</dd>
               <dt>Spielmodus</dt><dd>${esc(SECTIONS[2].fields[0].options.find((o) => o[0] === c.gamemode)?.[1] || c.gamemode)} · ${esc(SECTIONS[2].fields[1].options.find((o) => o[0] === c.difficulty)?.[1] || c.difficulty)}</dd>
               <dt>Online-Modus</dt><dd>${c.onlineMode ? 'aktiv' : '<span>aus (Cracked)</span>'}</dd>
               <dt>Whitelist</dt><dd>${c.whitelist ? `${c.whitelist.split(',').length} Spieler${c.enforceWhitelist ? ', erzwungen' : ''}` : 'aus'}</dd>
@@ -857,6 +866,11 @@ function fieldHTML(f, cfg, isNew) {
 }
 
 function fieldInner(f, cfg, isNew) {
+  if (f.type === 'netselect') {
+    const nets = state.networks || [];
+    f = { ...f, type: 'select', options: [['', 'Keins – eigener Port'], ...nets.map((n) => [n.id, `${n.name || n.id} (Port ${n.port})`])],
+      hint: nets.length ? f.hint : 'Noch kein Netzwerk vorhanden – lege eins unter „Netzwerke“ an.' };
+  }
   const v = cfg[f.k];
   const dis = f.newOnly && !isNew ? 'disabled' : '';
   const hint = f.hint ? `<span class="hint">${esc(f.hint)}${f.newOnly && !isNew ? ' – nach dem Anlegen nicht änderbar' : ''}</span>` : (f.newOnly && !isNew ? '<span class="hint">Nach dem Anlegen nicht änderbar</span>' : '');
@@ -963,7 +977,15 @@ function collectConfig(root, base) {
     else if (el.hasAttribute('data-list')) cfg[k] = el.value.split(/[\s,;]+/).filter(Boolean).join(',');
     else cfg[k] = el.value.trim();
   });
+  if (!PROXY_TYPES.includes(cfg.type)) cfg.network = '';
+  delete cfg.proxyMember; // derived from network on the server
+  delete cfg._cfKeySet;
   return cfg;
+}
+
+async function loadNetworks() {
+  try { const v = await api('GET', '/api/proxies'); state.networks = v.networks.map((n) => n.config); state.proxyInfo = v; } catch { /* keep */ }
+  return state.networks || [];
 }
 
 function renderConfig(body) {
@@ -990,7 +1012,7 @@ function renderConfig(body) {
     const cfg = collectConfig(root, base);
     const running = RUNNING.includes(current().phase);
     let compat = '';
-    if ((cfg.version !== base.version || cfg.type !== base.type) && (cfg.modrinthProjects || cfg.map || cfg.proxyMember)) {
+    if ((cfg.version !== base.version || cfg.type !== base.type) && (cfg.modrinthProjects || cfg.map || cfg.network)) {
       $('#cfgSave').disabled = true;
       $('#cfgSave').innerHTML = '<span class="spinner"></span>Prüfe Mods …';
       try {
@@ -1348,7 +1370,7 @@ async function openSiteSettings() {
    v1.2 – side navigation & pages
    ===================================================================== */
 const PAGES = {
-  network: { label: 'Netzwerk', icon: 'network', perm: 'view', render: renderNetworkPage },
+  network: { label: 'Netzwerke', icon: 'network', perm: 'view', render: renderNetworkPage },
   news: { label: 'Neuigkeiten', icon: 'news', perm: 'news', render: renderNewsPage },
   users: { label: 'Benutzer', icon: 'shield', perm: 'users', render: renderUsersPage },
 };
@@ -1429,8 +1451,9 @@ async function renderPlayersTab(body) {
     ${statusNote}
     <div class="grid two">
       <div class="panel"><div class="panel-head"><h3>${icon('users')}Online</h3><span class="dim num">${d.online.length} / ${d.max}</span></div>
-        <div class="panel-body"><div class="plist">${d.online.length ? d.online.map((n) => `<div class="prow">${avatar(n)}<b class="grow">${esc(n)}</b>${opsSet.has(n.toLowerCase()) ? '<span class="tag new">OP</span>' : ''}
-          ${act('kick', n, `${icon('door')}Kick`)}${act('ban', n, `${icon('ban')}Bannen`, 'danger')}${opsSet.has(n.toLowerCase()) ? '' : act('op', n, 'OP')}</div>`).join('') : '<div class="empty-note">Niemand online.</div>'}</div></div></div>
+        <div class="panel-body"><div class="plist">${d.online.length ? d.online.map((n) => `<div class="prow clickable" data-pm="${esc(n)}" title="Spieler-Aktionen öffnen">${avatar(n)}<b class="grow">${esc(n)}</b>${opsSet.has(n.toLowerCase()) ? '<span class="tag new">OP</span>' : ''}
+          ${edit ? `<button class="btn sm" data-pm="${esc(n)}" data-tab="items">${icon('box')}<span class="lbl">Item</span></button><button class="btn sm" data-pm="${esc(n)}" data-tab="tp">${icon('send')}<span class="lbl">Teleport</span></button>` : ''}
+          <button class="btn sm ${edit ? 'primary' : ''}" data-pm="${esc(n)}">${icon('sliders')}<span class="lbl">${edit ? 'Aktionen' : 'Details'}</span></button></div>`).join('') : '<div class="empty-note">Niemand online.</div>'}</div></div></div>
       <div class="panel"><div class="panel-head"><h3>${icon('shield')}Whitelist</h3>
           <div class="btn-group"><span class="tag ${d.whitelistOn ? 'new' : ''}">${d.whitelistOn ? 'aktiv' : 'aus'}</span>${edit ? `<button class="btn sm" data-pa="${d.whitelistOn ? 'whitelist-off' : 'whitelist-on'}" data-p="">${d.whitelistOn ? 'Ausschalten' : 'Einschalten'}</button>` : ''}</div></div>
         <div class="panel-body">${edit ? `<form class="addrow" data-add="whitelist-add"><input placeholder="Spielername" required pattern="[A-Za-z0-9_.\\-]{1,40}"><button class="btn sm primary">${icon('plus')}Hinzufügen</button></form>` : ''}
@@ -1448,10 +1471,13 @@ async function renderPlayersTab(body) {
         : '<div class="empty-note">Noch keine Daten – CraftDock zählt die Spielzeit jede Minute mit.</div>'}</div></div>
     ${d.configOps.length || d.configWhitelist.length ? `<p class="hint-text">Einträge mit „Konfig“ stehen in der Server-Konfiguration und werden beim nächsten Start wieder gesetzt. Dauerhaft entfernen: in der Konfiguration unter „Zugang“.</p>` : ''}
   </div>`;
+  body.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pm]');
+    if (!b) return;
+    e.stopPropagation();
+    openPlayerModal(s, b.dataset.pm, { online: d.online, ops: opsSet, running: d.running, tab: b.dataset.tab, onChange: () => { if (state.tab === 'players') renderTab(); } });
+  });
   const run = async (action, player, reason = '') => {
-    if (action === 'ban' || action === 'kick') {
-      if (!reason) reason = prompt(`Grund für ${action === 'ban' ? 'den Bann' : 'den Kick'} (optional):`) || '';
-    }
     try {
       const r = await api('POST', `/api/servers/${s.name}/playeraction`, { action, player, reason });
       toast(r.output || 'Erledigt');
@@ -1630,61 +1656,91 @@ function openAccount() {
   });
 }
 
-/* ---------- network page ---------- */
+/* ---------- networks page ---------- */
 async function renderNetworkPage(body) {
   let v;
-  try { v = await api('GET', '/api/proxy'); } catch (e) { body.innerHTML = `<div class="banner">${icon('alert')}<div>${esc(e.message)}</div></div>`; return; }
+  try { v = await api('GET', '/api/proxies'); } catch (e) { body.innerHTML = `<div class="banner">${icon('alert')}<div>${esc(e.message)}</div></div>`; return; }
   if (state.page !== 'network') return;
+  state.networks = v.networks.map((n) => n.config);
+  state.proxyInfo = v;
   const edit = can('settings');
   if (!v.available) {
-    body.innerHTML = `<div class="empty"><div class="box"><div class="art">${icon('network')}</div><h2>Velocity-Netzwerk</h2>
+    $('#pgActions').innerHTML = '';
+    body.innerHTML = `<div class="empty"><div class="box"><div class="art">${icon('network')}</div><h2>Velocity-Netzwerke</h2>
       <p>Ein Proxy bündelt mehrere Server hinter einer Adresse – Spieler wechseln im Spiel mit <span class="mono">/server &lt;name&gt;</span>. Dafür müssen alle Server in einem gemeinsamen Docker-Netzwerk laufen.</p>
       <p class="dim">Setze <span class="mono">CRAFTDOCK_NETWORK</span> (in der mitgelieferten docker-compose.yml bereits <span class="mono">minecraft</span>) und starte CraftDock neu.</p></div></div>`;
     return;
   }
-  const pc = v.config || { port: 25565, motd: 'Ein Minecraft-Netzwerk', maxPlayers: 100, onlineMode: true, lobby: '', memory: '512M', publicAddress: '', forcedHosts: {} };
-  const members = v.servers.filter((x) => x.member);
-  const running = v.state === 'running';
-  const task = v.task;
-  $('#pgActions').innerHTML = !v.exists || !edit ? '' : `
-    ${running ? `<button class="btn" data-pact="restart">${icon('restart')}<span class="lbl">Neustart</span></button><button class="btn" data-pact="stop">${icon('stop')}<span class="lbl">Stoppen</span></button>`
-      : `<button class="btn primary" data-pact="start">${icon('play')}<span class="lbl">Starten</span></button>`}
-    <button class="btn icon" id="pxLogs" title="Log anzeigen">${icon('terminal')}</button>`;
-  $$('[data-pact]').forEach((b) => b.addEventListener('click', async () => {
-    try { await api('POST', `/api/proxy/actions/${b.dataset.pact}`); toast('Wird ausgeführt'); setTimeout(() => renderNetworkPage(body), 1500); } catch (e) { toast(e.message, 'err'); }
-  }));
-  $('#pxLogs')?.addEventListener('click', openProxyLogs);
+  $('#pgActions').innerHTML = edit ? `<button class="btn primary" id="nwNew">${icon('plus')}<span class="lbl">Neues Netzwerk</span></button>` : '';
+  $('#nwNew')?.addEventListener('click', () => openNetworkCreate(v));
+  if (!v.networks.length) {
+    body.innerHTML = `<div class="empty"><div class="box"><div class="art">${icon('network')}</div><h2>Noch kein Netzwerk</h2>
+      <p>Ein Netzwerk ist ein eigener Velocity-Proxy mit eigener Adresse und eigenen Servern – z. B. „Survival-Netzwerk“ auf Port 25565 und „Event-Netzwerk“ auf Port 25570. Paper, Purpur und Folia werden automatisch konfiguriert, Fabric und Quilt bekommen FabricProxy-Lite.</p>
+      ${edit ? `<button class="btn primary" id="nwFirst">${icon('plus')}Erstes Netzwerk anlegen</button>` : ''}</div></div>`;
+    $('#nwFirst')?.addEventListener('click', () => openNetworkCreate(v));
+    return;
+  }
+  if (!v.networks.some((n) => n.config.id === state.netSel)) state.netSel = v.networks[0].config.id;
+  const nv = v.networks.find((n) => n.config.id === state.netSel);
+  const pc = nv.config;
+  const running = nv.state === 'running';
+  const status = (n) => n.task?.running ? ['busy', 'Wird eingerichtet'] : n.state === 'running' ? (n.reachable ? ['online', 'Online'] : ['starting', 'Startet']) : n.exists ? ['stopped', 'Gestoppt'] : ['error', 'Kein Container'];
+  const addr = (c) => c.publicAddress || (c.port === 25565 ? location.hostname : `${location.hostname}:${c.port}`);
+  const capable = v.servers.filter((x) => x.capable);
+  const members = v.servers.filter((x) => x.network === pc.id);
   body.innerHTML = `<div class="stack">
-    ${task && task.running ? `<div class="taskbar running flat"><span class="spinner"></span><span class="msg">${esc(task.message)}</span></div>` : ''}
-    ${task && task.error ? `<div class="taskbar failed flat">${icon('alert')}<span class="msg">${esc(task.error)}</span></div>` : ''}
-    ${v.exists ? `<div class="grid stats">
-      <div class="panel stat"><div class="k">${icon('network')}Proxy</div><div class="v">${running ? (v.reachable ? 'Online' : 'Startet') : 'Gestoppt'}</div><div class="s">${esc(v.status || '')}</div></div>
-      <div class="panel stat"><div class="k">${icon('users')}Spieler im Netzwerk</div><div class="v">${v.reachable ? v.online : '—'}<small>/ ${pc.maxPlayers}</small></div><div class="s"></div></div>
-      <div class="panel stat"><div class="k">${icon('server')}Server im Netzwerk</div><div class="v">${members.length}</div><div class="s">${pc.lobby ? `Lobby: ${esc(pc.lobby)}` : 'keine Lobby festgelegt'}</div></div>
-      <div class="panel stat"><div class="k">${icon('globe')}Adresse</div><div class="v sm mono">${esc(pc.publicAddress || (pc.port === 25565 ? location.hostname : location.hostname + ':' + pc.port))}</div><div class="s">Port ${pc.port}</div></div>
-    </div>` : `<div class="panel intro"><div class="panel-body"><h3>${icon('network')}Velocity-Netzwerk einrichten</h3>
-      <p class="muted">Ein Velocity-Proxy (Container <span class="mono">mc-velocity</span>) nimmt alle Verbindungen an und leitet Spieler an die Server im Netzwerk weiter – mit sicherem Modern Forwarding. Paper, Purpur und Folia werden automatisch konfiguriert, Fabric und Quilt bekommen FabricProxy-Lite. Danach in der Konfiguration eines Servers „Im Velocity-Netzwerk“ einschalten.</p></div></div>`}
-    <div class="grid two">
-      <div class="panel"><div class="panel-head"><h3>${icon('sliders')}Einstellungen</h3></div>
-        <div class="panel-body fgrid tight" id="pxForm">
+    <div class="netlist">${v.networks.map((n) => { const [cls, lbl] = status(n); return `<button class="netcard-a ${n.config.id === pc.id ? 'sel' : ''}" data-net="${esc(n.config.id)}">
+      <div class="nc-top"><span class="nc-ic">${icon('network')}</span><span class="grow"><b>${esc(n.config.name || n.config.id)}</b><small class="mono">${esc(n.config.id)}</small></span><span class="pill ${cls}"><span class="dot ${cls}"></span>${lbl}</span></div>
+      <div class="nc-addr mono">${esc(addr(n.config))}</div>
+      <div class="nc-meta"><span>${icon('users')}${n.reachable ? n.online : '–'} online</span><span>${icon('server')}${n.members.length} Server</span>${n.config.hidden ? `<span>${icon('globe')}nicht öffentlich</span>` : ''}</div></button>`; }).join('')}</div>
+
+    ${nv.task && nv.task.running ? `<div class="taskbar running flat"><span class="spinner"></span><span class="msg">${esc(nv.task.message)}</span></div>` : ''}
+    ${nv.task && nv.task.error ? `<div class="taskbar failed flat">${icon('alert')}<span class="msg">${esc(nv.task.error)}</span></div>` : ''}
+
+    <div class="panel net-detail"><div class="panel-head"><h3>${icon('network')}${esc(pc.name || pc.id)}<small class="dim mono">mc-velocity${pc.id === 'main' ? '' : '-' + esc(pc.id)}</small></h3>
+      ${edit ? `<div class="btn-group">${nv.exists ? (running ? `<button class="btn sm" data-pact="restart">${icon('restart')}Neustart</button><button class="btn sm" data-pact="stop">${icon('stop')}Stoppen</button>`
+        : `<button class="btn sm primary" data-pact="start">${icon('play')}Starten</button>`) : ''}
+        ${nv.exists ? `<button class="btn sm icon" id="pxLogs" title="Log anzeigen">${icon('terminal')}</button>` : ''}
+        <button class="btn sm icon danger" id="pxDel" title="Netzwerk löschen">${icon('trash')}</button></div>` : ''}</div>
+      <div class="grid two nopad-grid">
+        <div class="fgrid tight" id="pxForm">
+          <label class="field"><span>Name</span><input data-px="name" value="${esc(pc.name)}" placeholder="${esc(pc.id)}" ${edit ? '' : 'disabled'}></label>
           <label class="field"><span>Host-Port</span><input type="number" data-px="port" value="${pc.port}" ${edit ? '' : 'disabled'}></label>
-          <label class="field"><span>Max. Spieler (Anzeige)</span><input type="number" data-px="maxPlayers" value="${pc.maxPlayers}" ${edit ? '' : 'disabled'}></label>
           <label class="field full"><span>MOTD</span><input data-px="motd" value="${esc(pc.motd)}" ${edit ? '' : 'disabled'}><span class="hint">MiniMessage erlaubt, z. B. &lt;green&gt;Willkommen</span></label>
           <label class="field"><span>Lobby (Startserver)</span><select data-px="lobby" ${edit ? '' : 'disabled'}><option value="">automatisch</option>${members.map((x) => `<option ${x.name === pc.lobby ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+          <label class="field"><span>Max. Spieler (Anzeige)</span><input type="number" data-px="maxPlayers" value="${pc.maxPlayers}" ${edit ? '' : 'disabled'}></label>
+          <label class="field"><span>Öffentliche Adresse</span><input data-px="publicAddress" value="${esc(pc.publicAddress)}" placeholder="play.example.com" ${edit ? '' : 'disabled'}></label>
           <label class="field"><span>Speicher</span><input data-px="memory" value="${esc(pc.memory)}" ${edit ? '' : 'disabled'}></label>
-          <label class="field full"><span>Öffentliche Adresse</span><input data-px="publicAddress" value="${esc(pc.publicAddress)}" placeholder="play.example.com" ${edit ? '' : 'disabled'}></label>
           <label class="toggle-row full"><span class="t"><b>Online-Modus</b><small>Mojang/Microsoft-Konten am Proxy prüfen (empfohlen)</small></span><span class="switch"><input type="checkbox" data-px="onlineMode" ${pc.onlineMode ? 'checked' : ''} ${edit ? '' : 'disabled'}><span></span></span></label>
+          <label class="toggle-row full"><span class="t"><b>Auf der öffentlichen Seite zeigen</b><small>Netzwerk-Adresse auf Startseite und Dashboards</small></span><span class="switch"><input type="checkbox" data-px="shown" ${pc.hidden ? '' : 'checked'} ${edit ? '' : 'disabled'}><span></span></span></label>
           <div class="field full"><span class="field-label">Forced Hosts</span><div class="rows" id="pxHosts">${Object.entries(pc.forcedHosts || {}).map(([h, srv]) => hostRow(h, srv, members)).join('')}</div>
-            ${edit ? `<div><button class="btn sm" id="pxAddHost" type="button">${icon('plus')}Hostname hinzufügen</button></div>` : ''}<span class="hint">z. B. survival.example.com → survival: Spieler landen direkt auf diesem Server.</span></div>
-          ${edit ? `<div class="full"><button class="btn primary" id="pxSave">${icon('save')}${v.exists ? 'Speichern & Proxy neu starten' : 'Netzwerk einrichten'}</button></div>` : ''}
-        </div></div>
-      <div class="panel"><div class="panel-head"><h3>${icon('server')}Server</h3></div>
-        <div class="panel-body"><div class="plist">${v.servers.map((x) => `<div class="prow"><span class="dot ${x.phase}"></span><span class="grow"><b>${esc(x.displayName || x.name)}</b> <small class="dim">${esc(typeOf(x.type).label)}</small></span>
-          ${x.member ? '<span class="tag new">im Netzwerk</span>' : x.capable ? '<span class="tag">nicht verbunden</span>' : '<span class="tag del" title="Velocity-Forwarding wird nur von Paper, Purpur, Folia, Fabric und Quilt unterstützt">nicht kompatibel</span>'}
-          ${can('configure') && x.capable ? `<button class="btn ghost sm" data-goto="${esc(x.name)}">Konfigurieren</button>` : ''}</div>`).join('') || '<div class="empty-note">Noch keine Server.</div>'}</div>
-          <p class="hint-text">Server im Netzwerk veröffentlichen keinen eigenen Port mehr und laufen im Offline-Modus – die Anmeldung prüft der Proxy.</p></div></div>
-    </div></div>`;
-  $$('[data-goto]', body).forEach((b) => b.addEventListener('click', () => select(b.dataset.goto, 'config')));
+            ${edit ? `<div><button class="btn sm" id="pxAddHost" type="button" ${members.length ? '' : 'disabled title="Erst Server ins Netzwerk aufnehmen"'}>${icon('plus')}Hostname hinzufügen</button></div>` : ''}<span class="hint">z. B. survival.example.com → survival: Spieler landen direkt auf diesem Server.</span></div>
+          ${edit ? `<div class="full"><button class="btn primary" id="pxSave">${icon('save')}${nv.exists ? 'Speichern & Proxy neu starten' : 'Speichern & Proxy anlegen'}</button></div>` : ''}
+        </div>
+        <div class="net-servers">
+          <div class="field-label">Server</div>
+          <div class="plist">${capable.length ? capable.map((x) => `<div class="prow"><span class="dot ${x.phase}"></span><span class="grow"><b>${esc(x.displayName || x.name)}</b> <small class="dim">${esc(typeOf(x.type).label)}</small></span>
+            ${x.network === pc.id ? '<span class="tag new">in diesem Netzwerk</span>' : x.network ? `<span class="tag" title="Ein Server kann nur in einem Netzwerk sein">in ${esc(netName(x.network))}</span>` : '<span class="tag">nicht verbunden</span>'}
+            ${can('configure') ? `<button class="btn ghost sm" data-move="${esc(x.name)}" data-to="${x.network === pc.id ? '' : esc(pc.id)}">${x.network === pc.id ? 'Entfernen' : 'Aufnehmen'}</button>` : ''}</div>`).join('')
+            : '<div class="empty-note">Keine kompatiblen Server. Velocity-Forwarding unterstützen Paper, Purpur, Folia, Fabric und Quilt.</div>'}</div>
+          ${v.servers.some((x) => !x.capable) ? `<p class="hint-text">Nicht kompatibel und daher nicht aufgeführt: ${v.servers.filter((x) => !x.capable).map((x) => esc(x.name)).join(', ')}.</p>` : ''}
+          <p class="hint-text">Server im Netzwerk veröffentlichen keinen eigenen Port mehr und laufen im Offline-Modus – die Anmeldung prüft der Proxy. Aufnehmen oder Entfernen erstellt den Server-Container neu (ein laufender Server startet kurz neu).</p>
+        </div>
+      </div></div>
+  </div>`;
+
+  $$('[data-net]', body).forEach((b) => b.addEventListener('click', () => { state.netSel = b.dataset.net; renderNetworkPage(body); }));
+  $$('[data-pact]', body).forEach((b) => b.addEventListener('click', async () => {
+    try { await api('POST', `/api/proxies/${pc.id}/actions/${b.dataset.pact}`); toast('Wird ausgeführt'); setTimeout(() => renderNetworkPage(body), 1500); } catch (e) { toast(e.message, 'err'); }
+  }));
+  $('#pxLogs')?.addEventListener('click', () => openProxyLogs(pc.id));
+  $('#pxDel')?.addEventListener('click', async () => {
+    if (members.length) { toast(`Im Netzwerk sind noch Server (${members.map((x) => x.name).join(', ')}). Nimm sie zuerst heraus.`, 'err'); return; }
+    const ok = await typedConfirm({ title: 'Netzwerk löschen', word: pc.id, ok: 'Löschen', body: `<p>Der Proxy <span class="mono">${esc(pc.name || pc.id)}</span> wird gestoppt und samt Daten entfernt.</p>` });
+    if (!ok) return;
+    try { await api('POST', `/api/proxies/${pc.id}/actions/delete`); toast('Netzwerk wird gelöscht'); state.netSel = null; setTimeout(() => renderNetworkPage(body), 1200); } catch (e) { toast(e.message, 'err'); }
+  });
+  $$('[data-move]', body).forEach((b) => b.addEventListener('click', () => moveToNetwork(b.dataset.move, b.dataset.to, () => renderNetworkPage(body))));
   $('#pxAddHost')?.addEventListener('click', () => $('#pxHosts').insertAdjacentHTML('beforeend', hostRow('', '', members)));
   $('#pxHosts').addEventListener('click', (e) => { const d = e.target.closest('[data-del]'); if (d) d.closest('[data-row]').remove(); });
   $('#pxSave')?.addEventListener('click', async () => {
@@ -1692,13 +1748,59 @@ async function renderNetworkPage(body) {
     const hosts = {};
     $$('#pxHosts [data-row]').forEach((r) => { const h = $('input', r).value.trim().toLowerCase(), sv = $('select', r).value; if (h && sv) hosts[h] = sv; });
     try {
-      await api('PUT', '/api/proxy', { port: +val('port').value, maxPlayers: +val('maxPlayers').value, motd: val('motd').value, lobby: val('lobby').value,
-        memory: val('memory').value, publicAddress: val('publicAddress').value, onlineMode: val('onlineMode').checked, forcedHosts: hosts });
-      toast('Proxy wird eingerichtet');
+      await api('PUT', `/api/proxies/${pc.id}`, { name: val('name').value, port: +val('port').value, maxPlayers: +val('maxPlayers').value, motd: val('motd').value, lobby: val('lobby').value,
+        memory: val('memory').value, publicAddress: val('publicAddress').value, onlineMode: val('onlineMode').checked, hidden: !val('shown').checked, forcedHosts: hosts });
+      toast('Proxy wird neu eingerichtet');
       setTimeout(() => renderNetworkPage(body), 1200);
     } catch (e) { toast(e.message, 'err'); }
   });
-  if (!state.pageTimer) state.pageTimer = setInterval(() => { if (state.page === 'network' && !document.hidden && !document.activeElement?.closest?.('#pxForm')) renderNetworkPage($('#pgBody')); }, 8000);
+  if (!state.pageTimer) state.pageTimer = setInterval(() => { if (state.page === 'network' && !document.hidden && !document.activeElement?.closest?.('#pxForm') && !$('.overlay')) renderNetworkPage($('#pgBody')); }, 8000);
+}
+
+async function moveToNetwork(name, to, done) {
+  const srv = state.servers.find((x) => x.name === name);
+  if (!srv) return;
+  const running = RUNNING.includes(srv.phase);
+  const ok = await confirmDialog({ title: to ? 'Ins Netzwerk aufnehmen' : 'Aus dem Netzwerk entfernen', ok: to ? 'Aufnehmen' : 'Entfernen',
+    body: to ? `<p><b>${esc(name)}</b> wird Teil von <b>${esc(netName(to))}</b>${srv.config.network ? ` (und verlässt ${esc(netName(srv.config.network))})` : ''}. Der Server ist danach nur noch über den Proxy erreichbar.${running ? ' Er startet dafür kurz neu.' : ''}</p>`
+      : `<p><b>${esc(name)}</b> verlässt das Netzwerk und ist danach wieder direkt über Port ${srv.config.port} erreichbar.${running ? ' Er startet dafür kurz neu.' : ''}</p>` });
+  if (!ok) return;
+  try {
+    await api('PUT', `/api/servers/${name}`, { ...srv.config, network: to, proxyMember: undefined });
+    toast(to ? `${name} wird aufgenommen` : `${name} wird entfernt`);
+    await poll();
+    setTimeout(done, 800);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function openNetworkCreate(v) {
+  const used = new Set([...v.networks.map((n) => n.config.port), ...state.servers.filter((x) => !x.config.network).map((x) => x.config.port)]);
+  let port = 25565; while (used.has(port)) port++;
+  const first = !v.networks.length;
+  const m = openOverlay(`<div class="modal" role="dialog" aria-modal="true">
+    <header><h2>Neues Netzwerk</h2><button class="btn ghost icon sm" data-close aria-label="Schließen">${icon('x')}</button></header>
+    <div class="body">
+      <p>Jedes Netzwerk ist ein eigener Velocity-Proxy mit eigener Adresse, eigener Lobby und eigenen Servern.</p>
+      <label class="field"><span>Name</span><input id="ncName" placeholder="${first ? 'Hauptnetzwerk' : 'Event-Netzwerk'}" maxlength="48"></label>
+      <label class="field"><span>Kennung</span><input id="ncId" placeholder="${first ? 'main' : 'events'}" spellcheck="false" maxlength="31"><span class="hint">Kleinbuchstaben, Ziffern, Bindestriche. Container heißt mc-velocity-&lt;kennung&gt; – nicht änderbar.</span></label>
+      <label class="field"><span>Host-Port</span><input id="ncPort" type="number" value="${port}"><span class="hint">Port, über den Spieler das Netzwerk erreichen. Er darf von keinem Server und keinem anderen Netzwerk belegt sein.</span></label>
+    </div>
+    <footer><button class="btn" data-close>Abbrechen</button><button class="btn primary" id="ncGo">${icon('plus')}Anlegen & starten</button></footer></div>`);
+  const name = $('#ncName', m.el), id = $('#ncId', m.el);
+  let touched = false;
+  id.addEventListener('input', () => { touched = true; });
+  name.addEventListener('input', () => {
+    if (!touched) id.value = name.value.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 31);
+  });
+  name.focus();
+  $('#ncGo', m.el).addEventListener('click', async () => {
+    try {
+      const r = await api('POST', '/api/proxies', { id: id.value || (first ? 'main' : ''), name: name.value, port: +$('#ncPort', m.el).value, onlineMode: true, maxPlayers: 100, memory: '512M' });
+      m.close(); toast('Netzwerk wird eingerichtet'); state.netSel = r.id;
+      await loadNetworks();
+      renderNetworkPage($('#pgBody'));
+    } catch (e) { toast(e.message, 'err'); }
+  });
 }
 
 function hostRow(h, srv, members) {
@@ -1707,12 +1809,13 @@ function hostRow(h, srv, members) {
     <button type="button" class="btn icon ghost" data-del aria-label="Entfernen">${icon('x')}</button></div>`;
 }
 
-function openProxyLogs() {
+function openProxyLogs(id) {
+  let es;
   const m = openOverlay(`<div class="modal wide xl" role="dialog" aria-modal="true">
-    <header><h2>Proxy-Log</h2><button class="btn ghost icon sm" data-close aria-label="Schließen">${icon('x')}</button></header>
-    <div class="body"><div class="console-out modal-log" id="pxOut"></div></div></div>`, { onClose: () => es.close() });
+    <header><h2>Proxy-Log · ${esc(netName(id))}</h2><button class="btn ghost icon sm" data-close aria-label="Schließen">${icon('x')}</button></header>
+    <div class="body"><div class="console-out modal-log" id="pxOut"></div></div></div>`, { onClose: () => es && es.close() });
   const out = $('#pxOut', m.el);
-  const es = new EventSource('/api/proxy/logs');
+  es = new EventSource(`/api/proxies/${encodeURIComponent(id)}/logs`);
   es.onopen = () => { out.innerHTML = ''; };
   es.onmessage = (e) => { const d = document.createElement('div'); d.className = 'l'; d.textContent = e.data.replace(ANSI, ''); out.appendChild(d); out.scrollTop = out.scrollHeight; };
   es.addEventListener('end', () => es.close());
@@ -1827,6 +1930,172 @@ function openUserEditor(u) {
       m.close(); toast('Gespeichert'); renderUsersPage($('#pgBody'));
     } catch (e) { toast(e.message, 'err'); }
   });
+}
+
+/* ---------- player action modal ---------- */
+const ITEMS = [
+  ['Werkzeuge & Waffen', [['netherite_sword', 'Netheritschwert'], ['diamond_sword', 'Diamantschwert'], ['iron_sword', 'Eisenschwert'], ['netherite_pickaxe', 'Netheritspitzhacke'], ['diamond_pickaxe', 'Diamantspitzhacke'], ['iron_pickaxe', 'Eisenspitzhacke'],
+    ['diamond_axe', 'Diamantaxt'], ['diamond_shovel', 'Diamantschaufel'], ['bow', 'Bogen'], ['crossbow', 'Armbrust'], ['trident', 'Dreizack'], ['mace', 'Streitkolben'], ['arrow', 'Pfeil'], ['shield', 'Schild'], ['fishing_rod', 'Angel'], ['shears', 'Schere'], ['flint_and_steel', 'Feuerzeug']]],
+  ['Rüstung', [['netherite_helmet', 'Netherithelm'], ['netherite_chestplate', 'Netheritharnisch'], ['netherite_leggings', 'Netherithose'], ['netherite_boots', 'Netheritstiefel'], ['diamond_helmet', 'Diamanthelm'], ['diamond_chestplate', 'Diamantharnisch'],
+    ['diamond_leggings', 'Diamanthose'], ['diamond_boots', 'Diamantstiefel'], ['iron_chestplate', 'Eisenharnisch'], ['elytra', 'Elytren'], ['turtle_helmet', 'Schildkrötenpanzer']]],
+  ['Essen', [['cooked_beef', 'Steak'], ['golden_carrot', 'Goldene Karotte'], ['bread', 'Brot'], ['cooked_porkchop', 'Gebratenes Schweinefleisch'], ['baked_potato', 'Ofenkartoffel'], ['golden_apple', 'Goldener Apfel'], ['enchanted_golden_apple', 'Verzauberter goldener Apfel'], ['cake', 'Kuchen']]],
+  ['Rohstoffe', [['diamond', 'Diamant'], ['netherite_ingot', 'Netheritbarren'], ['emerald', 'Smaragd'], ['iron_ingot', 'Eisenbarren'], ['gold_ingot', 'Goldbarren'], ['copper_ingot', 'Kupferbarren'], ['coal', 'Kohle'], ['redstone', 'Redstone'],
+    ['lapis_lazuli', 'Lapislazuli'], ['quartz', 'Netherquarz'], ['amethyst_shard', 'Amethystscherbe'], ['ender_pearl', 'Enderperle'], ['blaze_rod', 'Lohenrute'], ['slime_ball', 'Schleimball'], ['string', 'Faden'], ['leather', 'Leder'], ['experience_bottle', 'Erfahrungsfläschchen']]],
+  ['Blöcke', [['oak_log', 'Eichenstamm'], ['oak_planks', 'Eichenholzbretter'], ['spruce_log', 'Fichtenstamm'], ['cobblestone', 'Bruchstein'], ['stone', 'Stein'], ['stone_bricks', 'Steinziegel'], ['deepslate_bricks', 'Tiefenschieferziegel'], ['glass', 'Glas'],
+    ['torch', 'Fackel'], ['lantern', 'Laterne'], ['white_wool', 'Weiße Wolle'], ['sand', 'Sand'], ['dirt', 'Erde'], ['grass_block', 'Grasblock'], ['obsidian', 'Obsidian'], ['crying_obsidian', 'Weinender Obsidian'], ['tnt', 'TNT'], ['chest', 'Truhe'], ['barrel', 'Fass'],
+    ['crafting_table', 'Werkbank'], ['furnace', 'Ofen'], ['anvil', 'Amboss'], ['enchanting_table', 'Zaubertisch'], ['bookshelf', 'Bücherregal'], ['beacon', 'Leuchtfeuer'], ['shulker_box', 'Shulker-Kiste'], ['respawn_anchor', 'Seelenanker']]],
+  ['Sonstiges', [['totem_of_undying', 'Totem der Unsterblichkeit'], ['name_tag', 'Namensschild'], ['saddle', 'Sattel'], ['lead', 'Leine'], ['bucket', 'Eimer'], ['water_bucket', 'Wassereimer'], ['lava_bucket', 'Lavaeimer'], ['firework_rocket', 'Feuerwerksrakete'],
+    ['map', 'Leere Karte'], ['compass', 'Kompass'], ['clock', 'Uhr'], ['spyglass', 'Fernrohr'], ['book', 'Buch'], ['writable_book', 'Buch und Feder'], ['white_bed', 'Weißes Bett'], ['oak_boat', 'Eichenboot'], ['minecart', 'Lore'], ['rail', 'Schiene'], ['ender_chest', 'Endertruhe']]],
+];
+const EFFECTS = [['speed', 'Schnelligkeit'], ['haste', 'Eile'], ['strength', 'Stärke'], ['jump_boost', 'Sprungkraft'], ['regeneration', 'Regeneration'], ['resistance', 'Resistenz'], ['fire_resistance', 'Feuerresistenz'], ['water_breathing', 'Unterwasseratmung'],
+  ['invisibility', 'Unsichtbarkeit'], ['night_vision', 'Nachtsicht'], ['health_boost', 'Extraenergie'], ['absorption', 'Absorption'], ['saturation', 'Sättigung'], ['glowing', 'Leuchten'], ['slow_falling', 'Sanfter Fall'], ['conduit_power', 'Meereskraft'],
+  ['dolphins_grace', 'Gunst des Delfins'], ['luck', 'Glück'], ['slowness', 'Langsamkeit'], ['mining_fatigue', 'Abbaulähmung'], ['nausea', 'Übelkeit'], ['blindness', 'Blindheit'], ['darkness', 'Dunkelheit'], ['hunger', 'Hunger'], ['weakness', 'Schwäche'], ['poison', 'Vergiftung'], ['levitation', 'Schwebekraft']];
+const DIMS = [['overworld', 'Oberwelt'], ['the_nether', 'Nether'], ['the_end', 'Ende']];
+const GM = [['survival', 'Überleben'], ['creative', 'Kreativ'], ['adventure', 'Abenteuer'], ['spectator', 'Zuschauer']];
+const itemName = (id) => { for (const [, list] of ITEMS) for (const [i, n] of list) if (i === id || `minecraft:${i}` === id) return n; return id; };
+
+function openPlayerModal(s, player, { online = [], ops = new Set(), running = true, tab = 'items', onChange } = {}) {
+  const edit = can('players') && running;
+  const others = online.filter((n) => n !== player);
+  const tabs = [['items', 'Items', 'box'], ['tp', 'Teleport', 'send'], ['state', 'Zustand', 'star'], ['msg', 'Nachricht', 'news'], ['mod', 'Moderation', 'shield']];
+  if (!tabs.some((t) => t[0] === tab)) tab = 'items';
+  const isOp = ops.has(player.toLowerCase());
+  const m = openOverlay(`<div class="modal pm" role="dialog" aria-modal="true" aria-label="Aktionen für ${esc(player)}">
+    <header class="pm-head"><img class="pm-av" src="https://mc-heads.net/head/${encodeURIComponent(player)}/96" alt="">
+      <div class="grow"><h2>${esc(player)} ${isOp ? '<span class="tag new">OP</span>' : ''}</h2><div class="pm-info" id="pmInfo"><span class="spinner"></span> Live-Daten …</div></div>
+      <button class="btn ghost icon sm" id="pmRefresh" title="Aktualisieren">${icon('refresh')}</button>
+      <button class="btn ghost icon sm" data-close aria-label="Schließen">${icon('x')}</button></header>
+    ${edit ? `<nav class="pm-tabs">${tabs.map(([id, l, ic]) => `<button class="${id === tab ? 'on' : ''}" data-pt="${id}">${icon(ic)}${l}</button>`).join('')}</nav>` : ''}
+    <div class="body pm-body" id="pmBody"></div>
+    <div class="pm-foot" id="pmOut" aria-live="polite"></div>
+  </div>`);
+  const av = $('.pm-av', m.el);
+  av.addEventListener('error', () => { const ph = document.createElement('span'); ph.className = 'pm-av ph'; ph.textContent = player[0].toUpperCase(); av.replaceWith(ph); }, { once: true });
+
+  let info = null;
+  const out = (msg, err) => { const o = $('#pmOut', m.el); o.className = 'pm-foot ' + (err ? 'err' : 'ok'); o.innerHTML = `${icon(err ? 'alert' : 'check')}<span>${esc(msg)}</span>`; };
+  const loadInfo = async () => {
+    const el = $('#pmInfo', m.el);
+    if (!running) { el.innerHTML = '<span class="dim">Server läuft nicht</span>'; return; }
+    try {
+      info = await api('GET', `/api/servers/${s.name}/playerinfo?player=${encodeURIComponent(player)}`);
+      const dim = DIMS.find(([d]) => info.dimension === `minecraft:${d}`)?.[1] || info.dimension || '';
+      el.innerHTML = [
+        info.pos ? `<span title="Position">${icon('globe')}<b class="mono">${info.pos.map((v) => Math.round(v)).join(' / ')}</b> ${esc(dim)}</span>` : '',
+        info.health != null ? `<span title="Leben">❤ <b>${String(info.health).replace('.', ',')}</b>/20</span>` : '',
+        info.food != null ? `<span title="Hunger">🍗 <b>${info.food}</b>/20</span>` : '',
+        info.level != null ? `<span title="Erfahrungslevel">✦ Level <b>${info.level}</b></span>` : '',
+        info.gamemode ? `<span>${esc(GM.find(([g]) => g === info.gamemode)?.[1] || info.gamemode)}</span>` : '',
+      ].join('');
+      if (curTab === 'tp' && !$('#tpX', m.el)?.value) draw();
+      if (curTab === 'state') $$('[data-gm]', m.el).forEach((b) => b.classList.toggle('on', b.dataset.gm === info.gamemode));
+    } catch (e) { el.innerHTML = `<span class="dim">${esc(e.message)}</span>`; }
+  };
+  const act = async (payload, okMsg, btn) => {
+    if (btn) { btn.disabled = true; }
+    try {
+      const r = await api('POST', `/api/servers/${s.name}/playeraction`, { player, ...payload });
+      out(r.output || okMsg || 'Erledigt');
+      setTimeout(loadInfo, 400);
+      return true;
+    } catch (e) { out(e.message, true); return false; } finally { if (btn) btn.disabled = false; }
+  };
+
+  let curTab = tab;
+  const draw = () => {
+    const b = $('#pmBody', m.el);
+    if (!edit) {
+      b.innerHTML = `<p class="muted">${running ? 'Du kannst die Live-Daten sehen, aber für Aktionen fehlt dir die Berechtigung „Spielerverwaltung“.' : 'Aktionen gehen nur bei laufendem Server.'}</p>`;
+      return;
+    }
+    $$('[data-pt]', m.el).forEach((x) => x.classList.toggle('on', x.dataset.pt === curTab));
+    if (curTab === 'items') {
+      b.innerHTML = `<div class="pm-row"><input id="itQ" placeholder="Item suchen oder ID eingeben, z. B. diamond oder create:wrench" spellcheck="false" autocomplete="off">
+          <div class="count"><button class="btn sm" data-c="1">1</button><button class="btn sm" data-c="16">16</button><button class="btn sm" data-c="64">64</button><input id="itN" type="number" min="1" max="6400" value="1"></div></div>
+        <div class="items" id="itList"></div>
+        <div class="pm-actions"><span class="grow dim small" id="itSel">Kein Item gewählt</span><button class="btn primary" id="itGive" disabled>${icon('box')}Geben</button></div>`;
+      let sel = '';
+      const list = $('#itList', m.el), q = $('#itQ', m.el), n = $('#itN', m.el);
+      const pick = (id) => {
+        sel = id;
+        $$('.it', list).forEach((x) => x.classList.toggle('on', x.dataset.it === id));
+        $('#itSel', m.el).innerHTML = id ? `<b>${esc(itemName(id))}</b> <span class="mono">${esc(id.includes(':') ? id : 'minecraft:' + id)}</span>` : 'Kein Item gewählt';
+        $('#itGive', m.el).disabled = !id;
+      };
+      const render = () => {
+        const term = q.value.trim().toLowerCase();
+        const groups = ITEMS.map(([g, items]) => [g, items.filter(([id, name]) => !term || id.includes(term.replace(/^minecraft:/, '').replace(/ /g, '_')) || name.toLowerCase().includes(term))]).filter(([, items]) => items.length);
+        // Offer the raw input as an ID if it looks like one (namespace or underscore) or nothing matched by name.
+        const custom = /^([a-z0-9_.-]+:)?[a-z0-9_./-]+$/.test(term) && (term.includes(':') || term.includes('_') || !groups.length)
+          && !groups.some(([, items]) => items.some(([id]) => id === term || `minecraft:${id}` === term));
+        list.innerHTML = (custom ? `<div class="it-g">Eigene ID</div><button class="it custom ${sel === term ? 'on' : ''}" data-it="${esc(term)}"><span class="mono">${esc(term)}</span></button>` : '')
+          + groups.map(([g, items]) => `<div class="it-g">${g}</div>${items.map(([id, name]) => `<button class="it ${sel === id ? 'on' : ''}" data-it="${id}" title="minecraft:${id}">${esc(name)}</button>`).join('')}`).join('')
+          || '<div class="empty-note">Nichts gefunden – gib eine Item-ID ein (z. B. minecraft:diamond).</div>';
+      };
+      render();
+      q.addEventListener('input', render);
+      q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const first = $('.it', list); if (first) { pick(first.dataset.it); $('#itGive', m.el).focus(); } } });
+      list.addEventListener('click', (e) => { const x = e.target.closest('.it'); if (x) pick(x.dataset.it); });
+      $$('[data-c]', m.el).forEach((x) => x.addEventListener('click', () => { n.value = x.dataset.c; }));
+      $('#itGive', m.el).addEventListener('click', (e) => act({ action: 'give', item: sel, count: +n.value }, `${n.value}× ${itemName(sel)} gegeben`, e.currentTarget));
+      q.focus();
+    } else if (curTab === 'tp') {
+      const pos = info?.pos || ['', '', ''];
+      const dimNow = (info?.dimension || 'minecraft:overworld').replace('minecraft:', '');
+      b.innerHTML = `<div class="pm-sec"><h4>Zu einem Spieler</h4>${others.length ? `<div class="pm-row"><select id="tpTarget">${others.map((n) => `<option>${esc(n)}</option>`).join('')}</select>
+          <button class="btn" id="tpTo">${icon('send')}${esc(player)} → Spieler</button><button class="btn" id="tpHere">Spieler → ${esc(player)}</button></div>` : '<p class="dim small">Sonst ist niemand online.</p>'}</div>
+        <div class="pm-sec"><h4>Zu Koordinaten</h4><div class="coords"><label>X<input id="tpX" type="number" step="any" value="${pos[0] !== '' ? Math.round(pos[0]) : ''}"></label><label>Y<input id="tpY" type="number" step="any" value="${pos[1] !== '' ? Math.round(pos[1]) : ''}"></label>
+          <label>Z<input id="tpZ" type="number" step="any" value="${pos[2] !== '' ? Math.round(pos[2]) : ''}"></label><label>Dimension<select id="tpDim">${DIMS.map(([d, l]) => `<option value="${d}" ${d === dimNow ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
+          <div class="pm-actions"><span class="grow dim small">${info?.pos ? 'Vorausgefüllt mit der aktuellen Position.' : ''}</span><button class="btn primary" id="tpGo">${icon('globe')}Teleportieren</button></div></div>`;
+      $('#tpTo', m.el)?.addEventListener('click', (e) => act({ action: 'tp-to', target: $('#tpTarget', m.el).value }, '', e.currentTarget));
+      $('#tpHere', m.el)?.addEventListener('click', (e) => act({ action: 'tp-here', target: $('#tpTarget', m.el).value }, '', e.currentTarget));
+      $('#tpGo', m.el).addEventListener('click', (e) => {
+        const num = (id) => { const v = $(id, m.el).value; return v === '' ? null : Number(v); };
+        act({ action: 'tp-coords', x: num('#tpX'), y: num('#tpY'), z: num('#tpZ'), dimension: $('#tpDim', m.el).value }, 'Teleportiert', e.currentTarget);
+      });
+    } else if (curTab === 'state') {
+      b.innerHTML = `<div class="pm-sec"><h4>Spielmodus</h4><div class="seg wide">${GM.map(([g, l]) => `<button data-gm="${g}" class="${info?.gamemode === g ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+        <div class="pm-sec"><h4>Schnell</h4><div class="pm-row"><button class="btn" id="stHeal">❤ Heilen &amp; sättigen</button><button class="btn" id="stClearFx">Alle Effekte entfernen</button></div></div>
+        <div class="pm-sec"><h4>Effekt geben</h4><div class="pm-grid3">
+          <label class="field"><span>Effekt</span><select id="fxId">${EFFECTS.map(([id, l]) => `<option value="${id}">${l}</option>`).join('')}</select></label>
+          <label class="field"><span>Dauer (Sekunden)</span><input id="fxSec" type="number" min="1" value="60"></label>
+          <label class="field"><span>Stufe</span><select id="fxAmp">${[1, 2, 3, 4, 5, 10].map((n) => `<option value="${n - 1}">${n}</option>`).join('')}</select></label></div>
+          <div class="pm-actions"><label class="chk"><input type="checkbox" id="fxHide"> Partikel ausblenden</label><span class="grow"></span><button class="btn primary" id="fxGo">Effekt geben</button></div></div>
+        <div class="pm-sec"><h4>Erfahrung</h4><div class="pm-row"><input id="xpN" type="number" value="5" class="narrow"><select id="xpU" class="narrow"><option value="levels">Level</option><option value="points">Punkte</option></select><button class="btn" id="xpGo">Hinzufügen</button><span class="dim small">Negative Werte ziehen ab.</span></div></div>`;
+      $$('[data-gm]', m.el).forEach((x) => x.addEventListener('click', async () => { if (await act({ action: 'gamemode', gamemode: x.dataset.gm }, 'Spielmodus geändert')) $$('[data-gm]', m.el).forEach((y) => y.classList.toggle('on', y === x)); }));
+      $('#stHeal', m.el).addEventListener('click', (e) => act({ action: 'heal' }, 'Geheilt und gesättigt', e.currentTarget));
+      $('#stClearFx', m.el).addEventListener('click', (e) => act({ action: 'effect-clear' }, 'Effekte entfernt', e.currentTarget));
+      $('#fxGo', m.el).addEventListener('click', (e) => act({ action: 'effect', effect: $('#fxId', m.el).value, seconds: +$('#fxSec', m.el).value, amplifier: +$('#fxAmp', m.el).value, hide: $('#fxHide', m.el).checked }, 'Effekt gegeben', e.currentTarget));
+      $('#xpGo', m.el).addEventListener('click', (e) => act({ action: 'xp', amount: +$('#xpN', m.el).value, unit: $('#xpU', m.el).value }, 'Erfahrung angepasst', e.currentTarget));
+    } else if (curTab === 'msg') {
+      b.innerHTML = `<div class="pm-sec"><h4>Private Nachricht</h4><textarea id="msgT" rows="3" maxlength="256" placeholder="Nur ${esc(player)} sieht diese Nachricht (als „Server“)."></textarea>
+        <div class="pm-actions"><span class="grow dim small" id="msgLen">0 / 256</span><button class="btn primary" id="msgGo">${icon('send')}Senden</button></div></div>`;
+      const t = $('#msgT', m.el);
+      t.addEventListener('input', () => { $('#msgLen', m.el).textContent = `${t.value.length} / 256`; });
+      t.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#msgGo', m.el).click(); } });
+      $('#msgGo', m.el).addEventListener('click', async (e) => { if (await act({ action: 'message', message: t.value }, 'Nachricht gesendet', e.currentTarget)) { t.value = ''; $('#msgLen', m.el).textContent = '0 / 256'; } });
+      t.focus();
+    } else if (curTab === 'mod') {
+      b.innerHTML = `<div class="pm-sec"><h4>Kicken oder bannen</h4><input id="modReason" placeholder="Grund (optional, wird dem Spieler angezeigt)" maxlength="200">
+          <div class="pm-actions"><span class="grow"></span><button class="btn" id="modKick">${icon('door')}Kicken</button><button class="btn danger" id="modBan">${icon('ban')}Bannen</button></div></div>
+        <div class="pm-sec"><h4>Rechte</h4><div class="pm-row">${isOp ? `<button class="btn" id="modDeop">OP entziehen</button>` : `<button class="btn" id="modOp">${icon('star')}OP geben</button>`}</div></div>
+        <div class="pm-sec danger-zone"><h4>Gefährlich</h4><div class="pm-row"><button class="btn danger" id="modClear">Inventar leeren</button><button class="btn danger" id="modKill">Töten</button></div></div>`;
+      const done = () => { onChange && onChange(); };
+      $('#modKick', m.el).addEventListener('click', async (e) => { if (await act({ action: 'kick', reason: $('#modReason', m.el).value }, `${player} wurde gekickt`, e.currentTarget)) { done(); setTimeout(m.close, 900); } });
+      $('#modBan', m.el).addEventListener('click', async () => {
+        if (!(await confirmDialog({ title: `${player} bannen`, danger: true, ok: 'Bannen', body: `<p>${esc(player)} wird dauerhaft vom Server ausgeschlossen. Entbannen geht im Reiter „Spieler“.</p>` }))) return;
+        if (await act({ action: 'ban', reason: $('#modReason', m.el)?.value || '' }, `${player} wurde gebannt`)) { done(); setTimeout(m.close, 900); }
+      });
+      $('#modOp', m.el)?.addEventListener('click', async (e) => { if (await act({ action: 'op' }, 'OP vergeben', e.currentTarget)) done(); });
+      $('#modDeop', m.el)?.addEventListener('click', async (e) => { if (await act({ action: 'deop' }, 'OP entzogen', e.currentTarget)) done(); });
+      $('#modClear', m.el).addEventListener('click', async () => { if (await confirmDialog({ title: 'Inventar leeren', danger: true, ok: 'Leeren', body: `<p>Das komplette Inventar von ${esc(player)} wird gelöscht. Das lässt sich nicht rückgängig machen.</p>` })) act({ action: 'clear' }, 'Inventar geleert'); });
+      $('#modKill', m.el).addEventListener('click', async () => { if (await confirmDialog({ title: `${player} töten`, danger: true, ok: 'Töten', body: `<p>${esc(player)} stirbt sofort und lässt sein Inventar fallen (je nach keepInventory).</p>` })) act({ action: 'kill' }, `${player} wurde getötet`); });
+    }
+  };
+  $$('[data-pt]', m.el).forEach((x) => x.addEventListener('click', () => { curTab = x.dataset.pt; const o = $('#pmOut', m.el); o.className = 'pm-foot'; o.innerHTML = ''; draw(); }));
+  $('#pmRefresh', m.el).addEventListener('click', loadInfo);
+  draw();
+  loadInfo();
 }
 
 boot();

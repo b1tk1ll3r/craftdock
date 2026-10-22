@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -49,6 +48,8 @@ type publicServer struct {
 	Uptime30    *float64 `json:"uptime30,omitempty"`
 	Map         bool     `json:"map"`
 	Network     bool     `json:"network"`
+	NetworkID   string   `json:"networkId,omitempty"`
+	NetworkName string   `json:"networkName,omitempty"`
 
 	port          int
 	publicAddress string
@@ -76,7 +77,13 @@ func (m *Manager) toPublic(ctx context.Context, c *ContainerSummary, cfg ServerC
 		LatencyMs: -1, Gamemode: cfg.Gamemode, Difficulty: cfg.Difficulty, PVP: cfg.PVP, Hardcore: cfg.Hardcore,
 		Whitelist: cfg.Whitelist != "" || cfg.EnforceWhitelist, OnlineMode: cfg.OnlineMode,
 		port: cfg.Port, publicAddress: cfg.PublicAddress, Modpack: cfg.Modpack,
-		Map: cfg.Map, Network: cfg.ProxyMember,
+		Map: cfg.Map, Network: cfg.Network != "", NetworkID: cfg.Network,
+	}
+	if pc := m.proxyConfig(cfg.Network); pc != nil {
+		ps.NetworkName = pc.displayName()
+		if pc.Hidden {
+			ps.Network, ps.NetworkID, ps.NetworkName = false, "", ""
+		}
 	}
 	ps.Uptime30 = m.store.Uptime(cfg.Name).D30
 	if ps.DisplayName == "" {
@@ -96,7 +103,6 @@ func (m *Manager) toPublic(ctx context.Context, c *ContainerSummary, cfg ServerC
 		ps.Status = "offline"
 	}
 	if lv.Reachable {
-		ps.Version = lv.Version
 		if lv.MOTD != "" {
 			ps.MOTD = lv.MOTD
 		}
@@ -106,7 +112,19 @@ func (m *Manager) toPublic(ctx context.Context, c *ContainerSummary, cfg ServerC
 	if lv.Running {
 		ps.StartedAt = lv.StartedAt
 	}
-	if ps.Version == "LATEST" {
+	// Version shown to players: the version that actually runs (live or last
+	// seen), never a guess derived from "LATEST".
+	ps.Version = ""
+	if lv.Reachable {
+		ps.Version = gameVersion(lv.Version)
+	}
+	if ps.Version == "" {
+		ps.Version = m.knownVersion(cfg)
+	}
+	if ps.Version == "" {
+		ps.Version = map[string]string{"SNAPSHOT": "Snapshot"}[cfg.Version]
+	}
+	if ps.Version == "" {
 		ps.Version = "Neueste"
 	}
 	return ps
@@ -164,12 +182,8 @@ func hostPort(host string, port int) string {
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
-// networkAddress is the address of the Velocity proxy, or "" without proxy.
-func (m *Manager) networkAddress(s SiteSettings, r *http.Request) string {
-	pc := m.proxyConfig()
-	if pc == nil {
-		return ""
-	}
+// networkAddress is the public address of a Velocity network.
+func networkAddress(pc *ProxyConfig, s SiteSettings, r *http.Request) string {
 	if pc.PublicAddress != "" {
 		return pc.PublicAddress
 	}
@@ -177,18 +191,18 @@ func (m *Manager) networkAddress(s SiteSettings, r *http.Request) string {
 }
 
 func (m *Manager) addressFor(ps *publicServer, s SiteSettings, r *http.Request) string {
-	if ps.Network {
-		pc := m.proxyConfig()
-		if pc != nil {
-			for h, srv := range pc.ForcedHosts {
-				if srv == ps.Name {
-					return h
-				}
+	if pc := m.proxyConfig(ps.NetworkID); ps.NetworkID != "" && pc != nil {
+		hosts := make([]string, 0, len(pc.ForcedHosts))
+		for h, srv := range pc.ForcedHosts {
+			if srv == ps.Name {
+				hosts = append(hosts, h)
 			}
 		}
-		if a := m.networkAddress(s, r); a != "" {
-			return a
+		if len(hosts) > 0 {
+			sort.Strings(hosts)
+			return hosts[0]
 		}
+		return networkAddress(pc, s, r)
 	}
 	if ps.publicAddress != "" {
 		return ps.publicAddress
@@ -230,19 +244,7 @@ func (a *API) publicSite(w http.ResponseWriter, r *http.Request) {
 		"title": s.Title, "tagline": s.Tagline, "discordUrl": s.DiscordURL, "servers": out,
 		"news": news, "events": events,
 	}
-	if addr := a.m.networkAddress(s, r); addr != "" {
-		nw := map[string]any{"address": addr, "online": false, "players": 0}
-		if pc := a.m.proxyConfig(); pc != nil {
-			nw["motd"] = pc.Motd
-			nw["lobby"] = pc.Lobby
-		}
-		if c, err := a.m.findProxy(ctx); err == nil && c != nil && c.State == "running" {
-			if st := a.m.cachedProxyPing(ctx, c); st != nil {
-				nw["online"], nw["players"] = true, st.Online
-			}
-		}
-		resp["network"] = nw
-	}
+	resp["networks"] = a.m.publicNetworks(ctx, s, r, out)
 	w.Header().Set("Cache-Control", "public, max-age=5")
 	writeJSON(w, 200, resp)
 }
@@ -376,22 +378,6 @@ func (m *Manager) publicNews(server string) ([]NewsItem, []NewsItem) {
 	return news, events
 }
 
-var proxyPingCache struct {
-	sync.Mutex
-	at time.Time
-	st *SLPStatus
-}
-
-func (m *Manager) cachedProxyPing(ctx context.Context, c *ContainerSummary) *SLPStatus {
-	proxyPingCache.Lock()
-	defer proxyPingCache.Unlock()
-	if time.Since(proxyPingCache.at) < 10*time.Second {
-		return proxyPingCache.st
-	}
-	proxyPingCache.st, proxyPingCache.at = m.pingProxy(ctx, c), time.Now()
-	return proxyPingCache.st
-}
-
 // ---- news (admin) -------------------------------------------------------------------
 
 func (a *API) listNews(w http.ResponseWriter, r *http.Request) {
@@ -434,4 +420,44 @@ func (a *API) deleteNews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+type publicNetwork struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Address string   `json:"address"`
+	Lobby   string   `json:"lobby,omitempty"`
+	Online  bool     `json:"online"`
+	Players int      `json:"players"`
+	Servers []string `json:"servers"` // public member servers
+}
+
+func (m *Manager) publicNetworks(ctx context.Context, s SiteSettings, r *http.Request, servers []publicServer) []publicNetwork {
+	out := []publicNetwork{}
+	cs, err := m.listProxies(ctx)
+	if err != nil {
+		return out
+	}
+	byID := map[string]*ContainerSummary{}
+	for i := range cs {
+		byID[proxyIDOf(cs[i])] = &cs[i]
+	}
+	for _, pc := range m.proxyConfigs() {
+		if pc.Hidden {
+			continue
+		}
+		pn := publicNetwork{ID: pc.ID, Name: pc.displayName(), Address: networkAddress(&pc, s, r), Lobby: pc.Lobby, Servers: []string{}}
+		for _, ps := range servers {
+			if ps.NetworkID == pc.ID {
+				pn.Servers = append(pn.Servers, ps.Name)
+			}
+		}
+		if c := byID[pc.ID]; c != nil && c.State == "running" {
+			if st := m.cachedProxyPing(ctx, pc.ID, c); st != nil {
+				pn.Online, pn.Players = true, st.Online
+			}
+		}
+		out = append(out, pn)
+	}
+	return out
 }

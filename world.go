@@ -48,7 +48,7 @@ func (m *Manager) Clone(ctx context.Context, src string, in CloneInput) error {
 	cfg.DataPath = ""
 	cfg.PublicHidden = true // a clone is usually a staging copy
 	cfg.PublicAddress = ""
-	cfg.ProxyMember = false
+	cfg.ProxyMember, cfg.Network = false, ""
 	cfg.MapPort = 0
 	cfg.Ports = nil // extra host ports would collide with the original
 	base := old.DisplayName

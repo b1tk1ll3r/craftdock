@@ -29,14 +29,15 @@ Web-Launcher und Konfigurator für Minecraft-Server, die in Docker laufen – mi
 - **Eigene JARs** per Drag & Drop hochladen und löschen (`/data/mods` bzw. `/data/plugins`) – auch bei gestopptem Server, dann über einen kurzlebigen Hilfscontainer.
 
 ### Spieler, Welt & Betrieb
-- **Spielerverwaltung per Klick:** Online-Spieler kicken, bannen, OP geben; Whitelist, Operatoren und Banns verwalten (Listen lesbar auch bei gestopptem Server). Spielzeit-Statistik mit „zuletzt online“ – minütlich erfasst.
+- **Spielerverwaltung per Klick:** Whitelist, Operatoren und Banns verwalten (Listen lesbar auch bei gestopptem Server). Spielzeit-Statistik mit „zuletzt online“ – minütlich erfasst.
+- **Spieler-Aktionen:** Ein Klick auf einen Online-Spieler öffnet ein Fenster mit Live-Daten (Position, Dimension, Leben, Hunger, Level, Spielmodus) und Aktionen: Items geben (Suche über gängige Items mit deutschen Namen oder beliebige ID, auch von Mods), Teleport zu Spieler/Spieler holen/zu Koordinaten in jeder Dimension, Spielmodus, Heilen, Effekte, Erfahrung, private Nachricht, Kick/Bann mit Grund, OP, Inventar leeren. Alle Eingaben werden serverseitig geprüft, bevor daraus ein Befehl wird.
 - **Auto-Pause bei Leerlauf:** Pausiert den Server nach X Minuten ohne Spieler und weckt ihn beim nächsten Verbindungsversuch automatisch auf – oder stoppt den Container ganz. CraftDock erkennt den Schlafzustand, ohne den Server zu wecken.
 - **Kompatibilitäts-Check vor Updates:** Vor einem Versions- oder Loader-Wechsel fragt CraftDock bei Modrinth nach, ob alle Mods/Plugins für die Zielversion existieren – auch jederzeit im Mods-Tab.
 - **Server klonen:** Kopie mit Konfiguration, Mods und Welt (konsistent gespeichert), z. B. als Testserver für ein Update.
 - **Welt importieren und zurücksetzen:** `.zip`/`.tar.gz` hochladen (Singleplayer-, Server- und Bukkit-Layouts mit Nether/End werden erkannt) oder die Welt mit neuem Seed/Welttyp neu erzeugen.
 
 ### Netzwerk, Karte & Community
-- **Velocity-Proxy-Netzwerk:** Ein Proxy (`mc-velocity`, Image `itzg/mc-proxy`) bündelt die Server hinter einer Adresse, Wechsel im Spiel per `/server <name>`. Modern Forwarding mit geheimem Schlüssel; Paper, Purpur und Folia werden automatisch konfiguriert, Fabric/Quilt bekommen FabricProxy-Lite. Lobby und Forced Hosts (z. B. `survival.example.com`) einstellbar. Server im Netzwerk veröffentlichen keinen eigenen Port.
+- **Mehrere Velocity-Netzwerke:** Jedes Netzwerk ist ein eigener Proxy (`mc-velocity-<kennung>`, Image `itzg/mc-proxy`) mit eigener Adresse, eigenem Port, eigener Lobby, eigenen Forced Hosts und eigenem Forwarding-Schlüssel – z. B. ein Hauptnetzwerk auf 25565 und ein Event-Netzwerk auf 25570. Wechsel im Spiel per `/server <name>`. Paper, Purpur und Folia werden automatisch konfiguriert, Fabric/Quilt bekommen FabricProxy-Lite. Ein Server gehört zu höchstens einem Netzwerk (ein Backend kann nur einen Schlüssel prüfen); Aufnehmen/Entfernen geht per Klick auf der Seite „Netzwerke“ oder in der Server-Konfiguration. Server im Netzwerk veröffentlichen keinen eigenen Port. Das Netzwerk aus Version 1.2 wird automatisch als „main“ übernommen (Container, Daten und Schlüssel bleiben).
 - **Live-Karte:** BlueMap wird automatisch installiert und unter `/map/<name>/` über CraftDock ausgeliefert (kein zusätzlicher Port nötig) und im öffentlichen Dashboard eingebettet.
 - **Uptime-Statistik:** Verfügbarkeit für 24 h, 7 und 30 Tage plus Tagesbalken, Spitzenwerte und Bestenliste.
 - **Neuigkeiten & Events:** Beiträge und Events (mit Countdown) für die Startseite und die Server-Dashboards.
@@ -79,7 +80,7 @@ Die Compose-Datei nutzt das fertige Image `ghcr.io/b1tk1ll3r/craftdock` (amd64 u
 | `CRAFTDOCK_PASSWORD` | – | Passwort. Fehlt es, steht ein temporäres Passwort im Log |
 | `CRAFTDOCK_DATA` | `data` (`/data` im Image) | Ablage für Benutzer, Protokoll, Einstellungen, Neuigkeiten, Statistik |
 | `DOCKER_HOST` / `-docker` | `unix:///var/run/docker.sock` | Docker-Endpunkt |
-| `CRAFTDOCK_NETWORK` / `-network` | – | Docker-Netzwerk für neue Server (in der Compose-Datei: `minecraft`). Pflicht für das Velocity-Netzwerk |
+| `CRAFTDOCK_NETWORK` / `-network` | – | Docker-Netzwerk für neue Server (in der Compose-Datei: `minecraft`). Pflicht für Velocity-Netzwerke |
 | `CRAFTDOCK_PING_HOST` | `host.docker.internal` | Host für den Status-Ping über den veröffentlichten Port, falls die Container-IP nicht erreichbar ist |
 | `CRAFTDOCK_CF_API_KEY` | – | Globaler CurseForge-API-Key (alternativ pro Server) |
 | `TZ` | – | Wird an die Minecraft-Container weitergereicht |
@@ -103,7 +104,8 @@ CraftDock pingt jeden Server zuerst über dessen Container-IP, danach über `CRA
 - Die öffentlichen Seiten laden Spieler-Avatare von `mc-heads.net` und Mod-Icons von `cdn.modrinth.com`. Spielernamen (auch in der Bestenliste) lassen sich in den Einstellungen ausblenden.
 - Die Live-Karte wird über CraftDock ausgeliefert; Cookies und Login-Daten werden dabei nie an BlueMap weitergereicht. Für nicht öffentliche Server ist sie nur angemeldeten Benutzern zugänglich.
 - Beim Aktivieren der Live-Karte setzt CraftDock in BlueMaps `core.conf` `accept-download: true` – damit wird der Download der Minecraft-Client-Ressourcen gemäß Mojang-EULA akzeptiert.
-- Hinweis zum Velocity-Netzwerk: Proxy und Server, die ihren Port weiter veröffentlichen, dürfen nicht denselben Host-Port nutzen (CraftDock prüft das).
+- Hinweis zu Velocity-Netzwerken: Proxys und Server, die ihren Port veröffentlichen, dürfen keinen Host-Port doppelt nutzen (CraftDock prüft das).
+- Angezeigt wird immer die Minecraft-Version, die tatsächlich läuft (Status-Ping, sonst zuletzt gesehene Version). Bei „LATEST“ auf Paper & Co. wird keine Version geraten, weil diese Plattformen der neuesten Mojang-Version oft hinterherhinken.
 
 ## Releases & CI
 
@@ -130,7 +132,8 @@ slp.go       Minecraft Server List Ping
 players.go   Spielerverwaltung
 world.go     Klonen, Welt-Import und -Reset
 bluemap.go   Vorbereitende Dateien (BlueMap, Forwarding) und Karten-Proxy
-proxy.go     Velocity-Netzwerk
+proxy.go     Velocity-Netzwerke
+playeractions.go  Spieler-Aktionen (Items, Teleport, Effekte …) und Live-Spielerdaten
 widget.go    Widget und Badge
 live.go      Live-Status-Cache und Spielerverlauf
 public.go    Öffentliche API

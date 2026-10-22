@@ -69,13 +69,12 @@ func (m *Manager) runPrepare(ctx context.Context, id string, running bool, cfg S
 	if running {
 		state = "running"
 	}
-	pc := m.proxyConfig()
 	online := "true"
-	if pc != nil && !pc.OnlineMode {
+	if pc := m.proxyConfig(cfg.Network); pc != nil && !pc.OnlineMode {
 		online = "false"
 	}
 	c := &ContainerSummary{ID: id, Image: cfg.Image(), State: state, Labels: map[string]string{labelConfig: mustJSON(cfg)}}
-	_, err := m.runInServer(ctx, c, prepareScript, bm, pv, proxySecretValue(), fp, online, cfg.owner())
+	_, err := m.runInServer(ctx, c, prepareScript, bm, pv, proxySecretFor(cfg.Network), fp, online, cfg.owner())
 	return err
 }
 

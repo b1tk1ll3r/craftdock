@@ -64,6 +64,12 @@ type Store struct {
 	history  map[string][]HistPoint
 	stats    statsFile
 	news     []NewsItem
+	versions map[string]knownVer
+}
+
+type knownVer struct {
+	FP      string `json:"fp"`
+	Version string `json:"version"`
 }
 
 // DayStat aggregates one calendar day (server local time) of samples.
@@ -100,6 +106,10 @@ func NewStore(dir string) *Store {
 	s.load("history.json", &s.history)
 	s.load("stats.json", &s.stats)
 	s.load("news.json", &s.news)
+	s.load("versions.json", &s.versions)
+	if s.versions == nil {
+		s.versions = map[string]knownVer{}
+	}
 	if s.stats.Daily == nil {
 		s.stats.Daily = map[string]map[string]*DayStat{}
 	}
@@ -201,6 +211,35 @@ func (s *Store) addPointLocked(name string, p HistPoint) {
 		i++
 	}
 	s.history[name] = h[i:]
+}
+
+// SetKnownVersion remembers the Minecraft version a server reported for its
+// current setup (fingerprint), so it can be shown while the server is offline.
+func (s *Store) SetKnownVersion(name, fp, version string) {
+	s.mu.Lock()
+	if cur, ok := s.versions[name]; ok && cur.FP == fp && cur.Version == version {
+		s.mu.Unlock()
+		return
+	}
+	s.versions[name] = knownVer{fp, version}
+	cp := make(map[string]knownVer, len(s.versions))
+	for k, v := range s.versions {
+		cp[k] = v
+	}
+	s.mu.Unlock()
+	if err := s.save("versions.json", cp); err != nil {
+		log.Printf("Versionen konnten nicht gespeichert werden: %v", err)
+	}
+}
+
+// KnownVersion returns the remembered version if the setup is unchanged.
+func (s *Store) KnownVersion(name, fp string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if v, ok := s.versions[name]; ok && v.FP == fp {
+		return v.Version
+	}
+	return ""
 }
 
 func (s *Store) History(name string) []HistPoint {

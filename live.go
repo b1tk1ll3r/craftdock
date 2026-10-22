@@ -86,6 +86,9 @@ func (m *Manager) Live(ctx context.Context, c *ContainerSummary, maxAge time.Dur
 		if st, addr := m.ping(ctx, ins, cfg, e.addr); st != nil {
 			e.addr = addr
 			v.Reachable = true
+			if gv := gameVersion(st.Version); gv != "" {
+				m.store.SetKnownVersion(cfg.Name, cfg.versionFingerprint(), gv)
+			}
 			v.Version, v.MOTD, v.Favicon = st.Version, st.MOTD, st.Favicon
 			v.Online, v.Max, v.LatencyMs = st.Online, st.Max, st.LatencyMs
 			v.Names = append(v.Names, st.Sample...)
@@ -111,23 +114,38 @@ func (m *Manager) Live(ctx context.Context, c *ContainerSummary, maxAge time.Dur
 	return v
 }
 
-// ping tries the last working address, the container IPs and finally the
-// published host port (via CRAFTDOCK_PING_HOST / host.docker.internal / localhost).
-func (m *Manager) ping(ctx context.Context, ins ContainerInspect, cfg ServerConfig, last string) (*SLPStatus, string) {
+// pingCandidates lists the addresses at which this container answers: its
+// container IPs and – only if the port is actually published – the host port.
+func pingCandidates(ins ContainerInspect, cfg ServerConfig) []string {
 	var cands []string
-	if last != "" {
-		cands = append(cands, last)
-	}
 	for _, n := range ins.NetworkSettings.Networks {
 		if n.IPAddress != "" {
 			cands = append(cands, net.JoinHostPort(n.IPAddress, "25565"))
 		}
 	}
-	port := strconv.Itoa(cfg.Port)
-	if h := os.Getenv("CRAFTDOCK_PING_HOST"); h != "" {
-		cands = append(cands, net.JoinHostPort(h, port))
+	// Members of a Velocity network do not publish their port. Trying the host
+	// port anyway would reach whatever else listens there – typically the proxy.
+	if !cfg.ProxyMember {
+		port := strconv.Itoa(cfg.Port)
+		if h := os.Getenv("CRAFTDOCK_PING_HOST"); h != "" {
+			cands = append(cands, net.JoinHostPort(h, port))
+		}
+		cands = append(cands, net.JoinHostPort("host.docker.internal", port), net.JoinHostPort("127.0.0.1", port))
 	}
-	cands = append(cands, net.JoinHostPort("host.docker.internal", port), net.JoinHostPort("127.0.0.1", port))
+	return cands
+}
+
+// ping tries the candidates, preferring the last working address – but only
+// if it still belongs to this container (container IPs get reused by Docker
+// after a server was recreated).
+func (m *Manager) ping(ctx context.Context, ins ContainerInspect, cfg ServerConfig, last string) (*SLPStatus, string) {
+	cands := pingCandidates(ins, cfg)
+	for i, a := range cands {
+		if a == last && i > 0 {
+			cands = append([]string{a}, append(cands[:i:i], cands[i+1:]...)...)
+			break
+		}
+	}
 	seen := map[string]bool{}
 	for _, a := range cands {
 		if seen[a] {
@@ -137,11 +155,67 @@ func (m *Manager) ping(ctx context.Context, ins ContainerInspect, cfg ServerConf
 		pctx, cancel := context.WithTimeout(ctx, 1200*time.Millisecond)
 		st, err := slpPing(pctx, a)
 		cancel()
-		if err == nil {
+		if err == nil && !isProxyVersion(st.Version) {
 			return st, a
 		}
 	}
 	return nil, ""
+}
+
+// isProxyVersion recognises the status answer of a proxy. A backend server
+// never reports itself like this; seeing it means we reached the wrong target.
+func isProxyVersion(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(n, "velocity") || strings.HasPrefix(n, "bungeecord") || strings.HasPrefix(n, "waterfall") || strings.HasPrefix(n, "gate ")
+}
+
+var (
+	gameVersionRe = regexp.MustCompile(`\b1\.[0-9]{1,2}(?:\.[0-9]{1,2})?\b|\b[2-9][0-9]\.[0-9]{1,2}(?:\.[0-9]{1,2})?\b`)
+	snapshotRe    = regexp.MustCompile(`\b[0-9]{2}w[0-9]{2}[a-z]\b`)
+)
+
+// gameVersion extracts the Minecraft version from a status version name such
+// as "1.21.4", "Paper 1.21.4" or "Purpur 1.21.4". With ranges the last
+// (newest) version wins.
+func gameVersion(name string) string {
+	if all := gameVersionRe.FindAllString(name, -1); len(all) > 0 {
+		return all[len(all)-1]
+	}
+	return snapshotRe.FindString(name)
+}
+
+// versionFingerprint changes whenever the configured version can change.
+func (c *ServerConfig) versionFingerprint() string {
+	return c.Type + "|" + c.Version + "|" + c.Modpack
+}
+
+// knownVersion is the best guess for the running Minecraft version without
+// network access: last seen version for the current setup, a fixed configured
+// version, or for Vanilla "LATEST" the cached Mojang release. Returns "" if
+// unknown (e.g. Paper on LATEST that has not started yet – Paper often lags
+// behind the newest Mojang release, so guessing would be wrong).
+func (m *Manager) knownVersion(cfg ServerConfig) string {
+	if v := m.store.KnownVersion(cfg.Name, cfg.versionFingerprint()); v != "" {
+		return v
+	}
+	switch cfg.Version {
+	case "LATEST", "SNAPSHOT", "":
+		if cfg.Type == "VANILLA" {
+			m.verMu.Lock()
+			defer m.verMu.Unlock()
+			if m.versions != nil {
+				if cfg.Version == "SNAPSHOT" {
+					return m.versions.Snapshot
+				}
+				return m.versions.Latest
+			}
+		}
+		return ""
+	}
+	if cfg.isModpack() {
+		return ""
+	}
+	return cfg.Version
 }
 
 func parsePlayers(out string) PlayerList {
@@ -240,4 +314,21 @@ func (m *Manager) cachedSleeping(name string) bool {
 	m.liveMu.Lock()
 	defer m.liveMu.Unlock()
 	return m.sleeping[name]
+}
+
+var liveRefresh sync.Map // name → time of last background refresh
+
+// refreshLiveAsync pings a server in the background (at most every 30 s) so
+// that its real version becomes known without blocking list requests.
+func (m *Manager) refreshLiveAsync(c ContainerSummary) {
+	name := configFromLabels(c.Labels).Name
+	if t, ok := liveRefresh.Load(name); ok && time.Since(t.(time.Time)) < 30*time.Second {
+		return
+	}
+	liveRefresh.Store(name, time.Now())
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		m.Live(ctx, &c, 10*time.Second)
+	}()
 }

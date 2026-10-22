@@ -214,16 +214,17 @@ async function renderHome(first) {
   setCount($('#kPl'), players); setCount($('#kMods'), d.servers.reduce((a, s) => a + s.modCount, 0));
 
   const nb = $('#netBox');
-  if (d.network) {
-    const key = JSON.stringify(d.network);
-    if (nb.dataset.key !== key) {
-      nb.dataset.key = key;
-      nb.innerHTML = `<div class="netcard ${first ? 'rise' : ''}"><div class="net-ic">${icon('network')}</div>
-        <div class="grow"><div class="net-k">Ein Netzwerk – eine Adresse</div><div class="net-addr">${esc(d.network.address)}</div>
-        <div class="net-sub">${d.network.online ? `<span class="status online"><span class="d"></span>${d.network.players} online</span>` : '<span class="status offline"><span class="d"></span>Proxy offline</span>'}<span>Im Spiel mit <code>/server &lt;name&gt;</code> wechseln</span></div></div>
-        <button class="btn primary" data-copy="${esc(d.network.address)}">${icon('copy')}Adresse kopieren</button></div>`;
-    }
-  } else nb.innerHTML = '';
+  const nets = d.networks || [];
+  const nkey = JSON.stringify(nets);
+  if (nb.dataset.key !== nkey) {
+    nb.dataset.key = nkey;
+    const label = (srvs) => srvs.map((n) => d.servers.find((x) => x.name === n)?.displayName || n);
+    nb.innerHTML = nets.length ? `<div class="netcards ${nets.length > 1 ? 'multi' : ''}">${nets.map((n) => `<div class="netcard ${first ? 'rise' : ''}"><div class="net-ic">${icon('network')}</div>
+        <div class="grow"><div class="net-k">${nets.length > 1 ? esc(n.name) : 'Ein Netzwerk – eine Adresse'}</div><div class="net-addr">${esc(n.address)}</div>
+        <div class="net-sub">${n.online ? `<span class="status online"><span class="d"></span>${n.players} online</span>` : '<span class="status offline"><span class="d"></span>Proxy offline</span>'}
+          <span>${n.servers.length ? `${label(n.servers).map(esc).join(' · ')}` : 'Im Spiel mit <code>/server &lt;name&gt;</code> wechseln'}</span></div></div>
+        <button class="btn primary" data-copy="${esc(n.address)}">${icon('copy')}<span>Adresse kopieren</span></button></div>`).join('')}</div>` : '';
+  }
   const evKey = JSON.stringify(d.events);
   if ($('#evBox').dataset.key !== evKey) {
     $('#evBox').dataset.key = evKey;
@@ -265,7 +266,7 @@ async function renderHome(first) {
           ${s.status === 'online' && s.latencyMs >= 0 ? `<span class="chip">${icon('wifi')}${s.latencyMs} ms</span>` : ''}
           ${s.uptime30 != null ? `<span class="chip" title="Verfügbarkeit der letzten 30 Tage">${icon('pulse')}${fmtPct(s.uptime30)}</span>` : ''}
           ${s.map ? `<span class="chip">${icon('map')}Karte</span>` : ''}
-          ${s.network ? `<span class="chip" title="Im Spiel mit /server ${esc(s.name)}">${icon('network')}/server ${esc(s.name)}</span>` : ''}
+          ${s.network ? `<span class="chip" title="${esc(s.networkName || 'Netzwerk')} – im Spiel mit /server ${esc(s.name)}">${icon('network')}/server ${esc(s.name)}</span>` : ''}
         </div>
         <div class="card-foot"><button class="btn addr-btn" data-copy="${esc(s.address)}" title="Adresse kopieren"><span>${esc(s.address)}</span>${icon('copy')}</button>
           <span class="btn primary" aria-hidden="true">${icon('arrow')}</span></div>`;
@@ -557,7 +558,7 @@ function renderSteps(s) {
   } else {
     steps.push(['Minecraft starten', `Öffne Minecraft: Java Edition${ver !== '–' ? ` in Version <b>${esc(ver)}</b>` : ''}.`]);
   }
-  steps.push(['Server hinzufügen', `Mehrspieler → Server hinzufügen → Adresse <b>${esc(s.address)}</b> eintragen.${s.network ? ` Im Netzwerk wechselst du mit <code>/server ${esc(s.name)}</code> hierher.` : ''}`]);
+  steps.push(['Server hinzufügen', `Mehrspieler → Server hinzufügen → Adresse <b>${esc(s.address)}</b> eintragen.${s.network ? ` Im Netzwerk${s.networkName ? ` „${esc(s.networkName)}“` : ''} wechselst du mit <code>/server ${esc(s.name)}</code> hierher.` : ''}`]);
   if (steps.length < 3) steps.push(['Loslegen', s.whitelist ? 'Die Whitelist ist aktiv – lass dich vorher freischalten.' : 'Verbinden und Spaß haben!']);
   $('#steps').innerHTML = steps.slice(0, 3).map(([t, d]) => `<div class="step"><b>${t}</b><p>${d}</p></div>`).join('');
 }

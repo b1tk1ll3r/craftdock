@@ -354,3 +354,15 @@ code { font-family: var(--mono); font-size: .9em; padding: 1px 6px; border-radiu
 .grow { flex: 1; min-width: 0; }
 .cols { align-items: start; }
 .toplist .ph { width: 30px; height: 30px; border-radius: 7px; flex: none; display: grid; place-items: center; background: linear-gradient(135deg, #4ade80, #38bdf8); color: #052e14; font-weight: 800; font-size: 13px; }
+
+.netcards { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.netcards .netcard { margin-top: 0; }
+.netcards.multi { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.netcards.multi .netcard { flex-wrap: wrap; }
+.netcards.multi .net-addr { font-size: 22px; }
+@media (max-width: 640px) { .netcards.multi { grid-template-columns: minmax(0, 1fr); } }
+
+.netcards.multi .netcard { flex-wrap: wrap; }
+.netcards.multi .netcard .grow { flex: 1 1 calc(100% - 90px); }
+.netcards.multi .netcard .btn { width: 100%; }
+.netcards.multi .net-addr { font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

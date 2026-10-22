@@ -71,7 +71,7 @@ func TestVelocityToml(t *testing.T) {
 }
 
 func TestEnvFeatures(t *testing.T) {
-	c := ServerConfig{Name: "s", Type: "FABRIC", IdleMode: "stop", RestartPolicy: "unless-stopped", Map: true, ProxyMember: true, ModrinthProjects: "lithium"}
+	c := ServerConfig{Name: "s", Type: "FABRIC", IdleMode: "stop", RestartPolicy: "unless-stopped", Map: true, Network: "main", ModrinthProjects: "lithium"}
 	c.Normalize()
 	if c.RestartPolicy != "on-failure" || c.IdleMinutes != 10 {
 		t.Fatalf("normalize: %+v", c)
@@ -173,5 +173,114 @@ func TestUptimeStats(t *testing.T) {
 	ranks := s.Players("x")
 	if len(ranks) != 1 || ranks[0].Minutes != 10 {
 		t.Fatalf("ranks %+v", ranks)
+	}
+}
+
+func f64(v float64) *float64 { return &v }
+
+func TestPlayerCommands(t *testing.T) {
+	ok := []struct {
+		in   PlayerActionInput
+		want string
+	}{
+		{PlayerActionInput{Action: "give", Player: "Steve", Item: "diamond_sword", Count: 2}, "give Steve minecraft:diamond_sword 2"},
+		{PlayerActionInput{Action: "give", Player: "Steve", Item: "create:wrench", Count: 1}, "give Steve create:wrench 1"},
+		{PlayerActionInput{Action: "tp-to", Player: "Steve", Target: "Alex"}, "tp Steve Alex"},
+		{PlayerActionInput{Action: "tp-here", Player: "Steve", Target: "Alex"}, "tp Alex Steve"},
+		{PlayerActionInput{Action: "tp-coords", Player: "Steve", X: f64(10.5), Y: f64(64), Z: f64(-3), Dimension: "the_nether"}, "execute in minecraft:the_nether run tp Steve 10.5 64 -3"},
+		{PlayerActionInput{Action: "gamemode", Player: "Steve", Gamemode: "creative"}, "gamemode creative Steve"},
+		{PlayerActionInput{Action: "effect", Player: "Steve", Effect: "speed", Seconds: 60, Amplifier: 1, Hide: true}, "effect give Steve minecraft:speed 60 1 true"},
+		{PlayerActionInput{Action: "xp", Player: "Steve", Amount: 5}, "xp add Steve 5 levels"},
+		{PlayerActionInput{Action: "message", Player: "Steve", Message: "Hallo\nWelt §cRot"}, "tell Steve Hallo Welt cRot"},
+		{PlayerActionInput{Action: "ban", Player: "Steve", Reason: "Grief"}, "ban Steve Grief"},
+		{PlayerActionInput{Action: "whitelist-on"}, "whitelist on"},
+	}
+	for _, tc := range ok {
+		cmds, err := buildPlayerCommands(tc.in)
+		if err != nil || cmds[0] != tc.want {
+			t.Errorf("%s: got %v / %v, want %q", tc.in.Action, cmds, err, tc.want)
+		}
+	}
+	bad := []PlayerActionInput{
+		{Action: "give", Player: "Steve", Item: "diamond; op Evil", Count: 1},
+		{Action: "give", Player: "Steve", Item: "diamond", Count: 0},
+		{Action: "give", Player: "St eve", Item: "diamond", Count: 1},
+		{Action: "tp-coords", Player: "Steve", X: f64(1), Y: f64(5000), Z: f64(1)},
+		{Action: "tp-coords", Player: "Steve", X: f64(1), Z: f64(1)},
+		{Action: "tp-to", Player: "Steve", Target: "Steve"},
+		{Action: "gamemode", Player: "Steve", Gamemode: "god"},
+		{Action: "effect", Player: "Steve", Effect: "speed", Seconds: 0},
+		{Action: "message", Player: "Steve", Message: "  "},
+		{Action: "op-all", Player: "Steve"},
+	}
+	for i, in := range bad {
+		if _, err := buildPlayerCommands(in); err == nil {
+			t.Errorf("bad case %d accepted: %+v", i, in)
+		}
+	}
+	if !rconFailure("No player was found") || rconFailure("Gave 2 [Diamond Sword] to Steve") {
+		t.Error("rconFailure")
+	}
+	if v, ok := nbtValue("Steve has the following entity data: [12.5d, 64.0d, -3.25d]"); !ok || v != "[12.5d, 64.0d, -3.25d]" {
+		t.Error("nbtValue")
+	}
+}
+
+func TestGameVersion(t *testing.T) {
+	cases := map[string]string{
+		"1.21.4": "1.21.4", "Paper 1.21.4": "1.21.4", "Purpur 1.21.10": "1.21.10", "1.20": "1.20",
+		"Velocity 1.7.2-1.21.10": "1.21.10", "25w14a": "25w14a", "26.1": "26.1", "Unknown": "",
+	}
+	for in, want := range cases {
+		if got := gameVersion(in); got != want {
+			t.Errorf("gameVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if !isProxyVersion("Velocity 1.7.2-1.21.10") || !isProxyVersion("BungeeCord 1.8.x-1.21.x") || isProxyVersion("Paper 1.21.4") {
+		t.Error("isProxyVersion")
+	}
+}
+
+func TestPingCandidatesAndLegacyNetwork(t *testing.T) {
+	var ins ContainerInspect
+	ins.NetworkSettings.Networks = map[string]struct {
+		IPAddress string `json:"IPAddress"`
+	}{"minecraft": {IPAddress: "172.18.0.5"}}
+	normal := pingCandidates(ins, ServerConfig{Port: 25565})
+	member := pingCandidates(ins, ServerConfig{Port: 25565, ProxyMember: true, Network: "main"})
+	if len(member) != 1 || member[0] != "172.18.0.5:25565" || len(normal) < 3 {
+		t.Fatalf("candidates: normal=%v member=%v", normal, member)
+	}
+	c := configFromLabels(map[string]string{labelConfig: `{"name":"lobby","type":"PAPER","proxyMember":true}`})
+	if c.Network != legacyNetworkID || !c.ProxyMember {
+		t.Fatalf("legacy migration: %+v", c)
+	}
+	n := ServerConfig{Name: "x", Network: "", ProxyMember: true}
+	n.Normalize()
+	if n.ProxyMember {
+		t.Fatal("ProxyMember must follow Network")
+	}
+	if proxyContainerName("main") != "mc-velocity" || proxyContainerName("events") != "mc-velocity-events" {
+		t.Fatal("proxy container names")
+	}
+}
+
+func TestKnownVersion(t *testing.T) {
+	s := NewStore(t.TempDir())
+	m := &Manager{store: s}
+	cfg := ServerConfig{Name: "a", Type: "PAPER", Version: "LATEST"}
+	if v := m.knownVersion(cfg); v != "" {
+		t.Fatalf("paper LATEST must be unknown before first start, got %q", v)
+	}
+	s.SetKnownVersion("a", cfg.versionFingerprint(), "1.21.4")
+	if v := m.knownVersion(cfg); v != "1.21.4" {
+		t.Fatalf("known = %q", v)
+	}
+	cfg.Type = "PURPUR"
+	if v := m.knownVersion(cfg); v != "" {
+		t.Fatalf("fingerprint change must reset, got %q", v)
+	}
+	if v := m.knownVersion(ServerConfig{Name: "b", Type: "PAPER", Version: "1.20.6"}); v != "1.20.6" {
+		t.Fatalf("fixed version = %q", v)
 	}
 }

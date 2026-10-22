@@ -323,24 +323,29 @@ func (m *Manager) packInfo(ctx context.Context, cfg ServerConfig) *PackInfo {
 	return nil
 }
 
-// resolvedVersion returns the concrete game version (from the live ping or Mojang).
+// resolvedVersion returns the concrete game version the server runs (live
+// ping, then last known version). For Vanilla on LATEST it falls back to
+// Mojang's newest release; for other platforms on LATEST it stays empty
+// rather than guessing (Paper & Co. may not support the newest release yet).
 func (m *Manager) resolvedVersion(ctx context.Context, c *ContainerSummary, cfg ServerConfig) string {
-	if lv := m.Live(ctx, c, 60*time.Second); lv.Reachable && versionNumRe.MatchString(lv.Version) {
-		return versionNumRe.FindString(lv.Version)
-	}
-	if cfg.Version != "LATEST" && cfg.Version != "SNAPSHOT" {
-		return cfg.Version
-	}
-	if vl, err := m.Versions(ctx); err == nil {
-		if cfg.Version == "SNAPSHOT" {
-			return vl.Snapshot
+	if lv := m.Live(ctx, c, 60*time.Second); lv.Reachable {
+		if v := gameVersion(lv.Version); v != "" {
+			return v
 		}
-		return vl.Latest
+	}
+	if v := m.knownVersion(cfg); v != "" {
+		return v
+	}
+	if cfg.Type == "VANILLA" {
+		if vl, err := m.Versions(ctx); err == nil {
+			if cfg.Version == "SNAPSHOT" {
+				return vl.Snapshot
+			}
+			return vl.Latest
+		}
 	}
 	return ""
 }
-
-var versionNumRe = regexp.MustCompile(`\b1\.[0-9]+(\.[0-9]+)?\b|\b[2-9][0-9]\.[0-9]+(\.[0-9]+)?\b`)
 
 func (m *Manager) Mods(ctx context.Context, name string) (ModsInfo, error) {
 	c, err := m.find(ctx, name)
@@ -454,6 +459,7 @@ type CompatResult struct {
 	OK          int          `json:"ok"`
 	Missing     int          `json:"missing"`
 	Unchecked   []string     `json:"unchecked"` // jars not managed via Modrinth
+	Note        string       `json:"note,omitempty"`
 }
 
 var modLoaders = map[string][]string{
@@ -478,13 +484,19 @@ func (m *Manager) CompatCheck(ctx context.Context, name, targetType, targetVersi
 		target.Version = targetVersion
 	}
 	res := CompatResult{Loader: target.Loader(), Items: []CompatItem{}, Unchecked: []string{}}
-	switch target.Version {
-	case "", "LATEST", "SNAPSHOT":
+	switch {
+	case target.versionFingerprint() == cfg.versionFingerprint():
+		// Unchanged setup: check against what actually runs.
+		res.GameVersion = m.resolvedVersion(ctx, c, cfg)
+	case target.Version == "" || target.Version == "LATEST" || target.Version == "SNAPSHOT":
 		if vl, err := m.Versions(ctx); err == nil {
 			res.GameVersion = vl.Latest
 			if target.Version == "SNAPSHOT" {
 				res.GameVersion = vl.Snapshot
 			}
+		}
+		if target.Type != "VANILLA" {
+			res.Note = fmt.Sprintf("„Neueste“ wird beim Start von %s aufgelöst und kann älter sein als die neueste Minecraft-Version. Geprüft wurde gegen %s.", typeLabel(target.Type), res.GameVersion)
 		}
 	default:
 		res.GameVersion = target.Version
@@ -549,4 +561,17 @@ func (m *Manager) CompatCheck(ctx context.Context, name, targetType, targetVersi
 		}
 	}
 	return res, nil
+}
+
+func typeLabel(t string) string {
+	switch t {
+	case "NEOFORGE":
+		return "NeoForge"
+	case "AUTO_CURSEFORGE":
+		return "CurseForge"
+	}
+	if t == "" {
+		return t
+	}
+	return t[:1] + strings.ToLower(t[1:])
 }

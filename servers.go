@@ -86,7 +86,8 @@ type ServerConfig struct {
 	IdleMinutes      int               `json:"idleMinutes"` // minutes without players
 	Map              bool              `json:"map"`         // BlueMap live map
 	MapPort          int               `json:"mapPort"`     // optional host port for BlueMap
-	ProxyMember      bool              `json:"proxyMember"` // part of the Velocity network
+	ProxyMember      bool              `json:"proxyMember"` // derived: Network != "" (kept for ≤ 1.2 labels)
+	Network          string            `json:"network"`     // ID of the Velocity network, "" = none
 	Icon             string            `json:"icon"`
 	DataPath         string            `json:"dataPath"`
 	ExtraEnv         map[string]string `json:"extraEnv"`
@@ -168,6 +169,8 @@ func (c *ServerConfig) Normalize() {
 	c.DisplayName = strings.TrimSpace(c.DisplayName)
 	c.Description = strings.TrimSpace(c.Description)
 	c.PublicAddress = strings.TrimSpace(c.PublicAddress)
+	c.Network = strings.ToLower(strings.TrimSpace(c.Network))
+	c.ProxyMember = c.Network != ""
 	if c.IdleMode != "" && c.IdleMinutes == 0 {
 		c.IdleMinutes = 10
 	}
@@ -258,6 +261,8 @@ func (c *ServerConfig) Validate() error {
 		return badRequest("Die Live-Karte (BlueMap) braucht Paper, Purpur, Spigot, Fabric, Quilt, Forge, NeoForge oder ein Modrinth-Pack")
 	case c.MapPort != 0 && (c.MapPort < 1 || c.MapPort > 65535):
 		return badRequest("Ungültiger Karten-Port")
+	case c.Network != "" && !nameRe.MatchString(c.Network):
+		return badRequest("Ungültiges Netzwerk %q", c.Network)
 	case c.ProxyMember && !c.proxyCapable():
 		return badRequest("Im Velocity-Netzwerk können nur Paper, Purpur, Folia, Fabric und Quilt laufen")
 	}
@@ -432,8 +437,8 @@ func (c *ServerConfig) Env() []string {
 	}
 	if c.ProxyMember {
 		env["ONLINE_MODE"] = "false" // authentication happens at the proxy
-		if c.isFabricFamily() && proxySecretValue() != "" {
-			env["FABRIC_PROXY_SECRET"] = proxySecretValue()
+		if s := proxySecretFor(c.Network); c.isFabricFamily() && s != "" {
+			env["FABRIC_PROXY_SECRET"] = s
 		}
 	}
 	for k, v := range opt {
@@ -494,6 +499,7 @@ type ServerView struct {
 	Phase       string       `json:"phase"`
 	Task        *Task        `json:"task,omitempty"`
 	CFKeySet    bool         `json:"cfKeySet,omitempty"`
+	GameVersion string       `json:"gameVersion,omitempty"` // running Minecraft version, if known
 	Sleeping    bool         `json:"sleeping,omitempty"`
 }
 
@@ -517,8 +523,8 @@ type Manager struct {
 	sampleEvery time.Duration
 	sleeping    map[string]bool
 
-	proxyMu  sync.Mutex
-	proxyCfg *ProxyConfig
+	proxyMu sync.Mutex
+	proxies map[string]*ProxyConfig
 
 	modMu      sync.Mutex
 	modrinth   map[string]modrinthCacheEntry
@@ -600,6 +606,10 @@ func configFromLabels(labels map[string]string) ServerConfig {
 	if c.Name == "" {
 		c.Name = labels[labelName]
 	}
+	if c.ProxyMember && c.Network == "" {
+		c.Network = legacyNetworkID // configuration stored by CraftDock ≤ 1.2
+	}
+	c.ProxyMember = c.Network != ""
 	return c
 }
 
@@ -614,6 +624,10 @@ func (m *Manager) view(c ContainerSummary) ServerView {
 	v := ServerView{
 		Name: cfg.Name, Config: publicConfig(cfg), ContainerID: c.ID, Image: c.Image,
 		State: c.State, StatusText: c.Status, Task: m.task(cfg.Name), CFKeySet: cfg.cfKey() != "",
+		GameVersion: m.knownVersion(cfg),
+	}
+	if v.GameVersion == "" && c.State == "running" {
+		m.refreshLiveAsync(c)
 	}
 	switch {
 	case strings.Contains(c.Status, "(health: starting)"):
@@ -733,8 +747,10 @@ func (m *Manager) checkPorts(ctx context.Context, cfg ServerConfig) error {
 		}
 		mine[p] = true
 	}
-	if pc := m.proxyConfig(); pc != nil && mine[strconv.Itoa(pc.Port)+"/tcp"] {
-		return conflict("Host-Port %d wird bereits vom Velocity-Proxy verwendet", pc.Port)
+	for _, pc := range m.proxyConfigs() {
+		if mine[strconv.Itoa(pc.Port)+"/tcp"] {
+			return conflict("Host-Port %d wird bereits vom Velocity-Netzwerk „%s“ verwendet", pc.Port, pc.displayName())
+		}
 	}
 	cs, err := m.d.ListContainers(ctx, labelManaged+"=true")
 	if err != nil {
@@ -849,8 +865,8 @@ func (m *Manager) Create(ctx context.Context, cfg ServerConfig) error {
 		if err != nil {
 			return err
 		}
-		if cfg.ProxyMember {
-			defer m.refreshProxyAsync()
+		if cfg.Network != "" {
+			defer m.refreshProxyAsync(cfg.Network)
 		}
 		return m.startContainer(ctx, id, false, cfg, p)
 	})
@@ -914,8 +930,8 @@ func (m *Manager) recreate(ctx context.Context, name string, newCfg *ServerConfi
 			}
 		}
 		_, err := m.replaceContainer(ctx, id, old, cfg, true, p)
-		if old.ProxyMember != cfg.ProxyMember || (cfg.ProxyMember && old.Type != cfg.Type) {
-			m.refreshProxyAsync()
+		if old.Network != cfg.Network || (cfg.Network != "" && old.Type != cfg.Type) {
+			m.refreshProxyAsync(old.Network, cfg.Network)
 		}
 		return err
 	})
@@ -971,8 +987,8 @@ func (m *Manager) Delete(ctx context.Context, name string, removeData bool) erro
 		if err := m.d.Remove(ctx, id); err != nil && !IsNotFound(err) {
 			return err
 		}
-		if cfg.ProxyMember {
-			m.refreshProxyAsync()
+		if cfg.Network != "" {
+			m.refreshProxyAsync(cfg.Network)
 		}
 		if removeData && cfg.DataPath == "" {
 			p("Weltdaten werden gelöscht …")

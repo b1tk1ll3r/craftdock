@@ -15,7 +15,7 @@ import (
 )
 
 // appVersion is overridden at build time via -ldflags "-X main.appVersion=…".
-var appVersion = "1.2.0"
+var appVersion = "1.3.0"
 
 //go:embed web
 var webFS embed.FS
@@ -59,7 +59,7 @@ func main() {
 	store := NewStore(dataDir)
 	mgr := NewManager(d, *network, store)
 	pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
-	mgr.loadProxy(pctx)
+	mgr.loadProxies(pctx)
 	pcancel()
 	adminFS, _ := fs.Sub(webFS, "web/admin")
 	publicFS, _ := fs.Sub(webFS, "web/public")
