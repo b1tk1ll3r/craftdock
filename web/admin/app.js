@@ -1945,11 +1945,54 @@ const ITEMS = [
     ['torch', 'Fackel'], ['lantern', 'Laterne'], ['white_wool', 'Weiße Wolle'], ['sand', 'Sand'], ['dirt', 'Erde'], ['grass_block', 'Grasblock'], ['obsidian', 'Obsidian'], ['crying_obsidian', 'Weinender Obsidian'], ['tnt', 'TNT'], ['chest', 'Truhe'], ['barrel', 'Fass'],
     ['crafting_table', 'Werkbank'], ['furnace', 'Ofen'], ['anvil', 'Amboss'], ['enchanting_table', 'Zaubertisch'], ['bookshelf', 'Bücherregal'], ['beacon', 'Leuchtfeuer'], ['shulker_box', 'Shulker-Kiste'], ['respawn_anchor', 'Seelenanker']]],
   ['Sonstiges', [['totem_of_undying', 'Totem der Unsterblichkeit'], ['name_tag', 'Namensschild'], ['saddle', 'Sattel'], ['lead', 'Leine'], ['bucket', 'Eimer'], ['water_bucket', 'Wassereimer'], ['lava_bucket', 'Lavaeimer'], ['firework_rocket', 'Feuerwerksrakete'],
-    ['map', 'Leere Karte'], ['compass', 'Kompass'], ['clock', 'Uhr'], ['spyglass', 'Fernrohr'], ['book', 'Buch'], ['writable_book', 'Buch und Feder'], ['white_bed', 'Weißes Bett'], ['oak_boat', 'Eichenboot'], ['minecart', 'Lore'], ['rail', 'Schiene'], ['ender_chest', 'Endertruhe']]],
+    ['enchanted_book', 'Verzaubertes Buch'], ['map', 'Leere Karte'], ['compass', 'Kompass'], ['clock', 'Uhr'], ['spyglass', 'Fernrohr'], ['book', 'Buch'], ['writable_book', 'Buch und Feder'], ['white_bed', 'Weißes Bett'], ['oak_boat', 'Eichenboot'], ['minecart', 'Lore'], ['rail', 'Schiene'], ['ender_chest', 'Endertruhe']]],
 ];
 const EFFECTS = [['speed', 'Schnelligkeit'], ['haste', 'Eile'], ['strength', 'Stärke'], ['jump_boost', 'Sprungkraft'], ['regeneration', 'Regeneration'], ['resistance', 'Resistenz'], ['fire_resistance', 'Feuerresistenz'], ['water_breathing', 'Unterwasseratmung'],
   ['invisibility', 'Unsichtbarkeit'], ['night_vision', 'Nachtsicht'], ['health_boost', 'Extraenergie'], ['absorption', 'Absorption'], ['saturation', 'Sättigung'], ['glowing', 'Leuchten'], ['slow_falling', 'Sanfter Fall'], ['conduit_power', 'Meereskraft'],
   ['dolphins_grace', 'Gunst des Delfins'], ['luck', 'Glück'], ['slowness', 'Langsamkeit'], ['mining_fatigue', 'Abbaulähmung'], ['nausea', 'Übelkeit'], ['blindness', 'Blindheit'], ['darkness', 'Dunkelheit'], ['hunger', 'Hunger'], ['weakness', 'Schwäche'], ['poison', 'Vergiftung'], ['levitation', 'Schwebekraft']];
+const ENCHANTS = [
+  ['Rüstung', [['protection', 'Schutz', 4], ['fire_protection', 'Feuerschutz', 4], ['blast_protection', 'Explosionsschutz', 4], ['projectile_protection', 'Schusssicher', 4], ['feather_falling', 'Federfall', 4],
+    ['thorns', 'Dornen', 3], ['respiration', 'Atmung', 3], ['aqua_affinity', 'Wasseraffinität', 1], ['depth_strider', 'Wasserläufer', 3], ['frost_walker', 'Eisläufer', 2], ['soul_speed', 'Seelenläufer', 3], ['swift_sneak', 'Huschen', 3]]],
+  ['Waffen', [['sharpness', 'Schärfe', 5], ['smite', 'Bann', 5], ['bane_of_arthropods', 'Nemesis der Gliederfüßer', 5], ['knockback', 'Rückstoß', 2], ['fire_aspect', 'Verbrennung', 2], ['looting', 'Plünderung', 3], ['sweeping_edge', 'Schwungkraft', 3],
+    ['density', 'Dichte', 5], ['breach', 'Durchbruch', 4], ['wind_burst', 'Windstoß', 3]]],
+  ['Werkzeuge', [['efficiency', 'Effizienz', 5], ['silk_touch', 'Behutsamkeit', 1], ['fortune', 'Glück', 3], ['luck_of_the_sea', 'Glück des Meeres', 3], ['lure', 'Köder', 3]]],
+  ['Fernkampf', [['power', 'Stärke', 5], ['punch', 'Schlag', 2], ['flame', 'Flamme', 1], ['infinity', 'Unendlichkeit', 1], ['multishot', 'Mehrfachschuss', 1], ['quick_charge', 'Schnellladen', 3], ['piercing', 'Durchschuss', 4],
+    ['loyalty', 'Treue', 3], ['impaling', 'Harpune', 5], ['riptide', 'Sog', 3], ['channeling', 'Entladung', 1]]],
+  ['Allgemein', [['unbreaking', 'Haltbarkeit', 3], ['mending', 'Reparatur', 1], ['binding_curse', 'Fluch der Bindung', 1], ['vanishing_curse', 'Fluch des Verschwindens', 1]]],
+];
+const ENCH_MAX = Object.fromEntries(ENCHANTS.flatMap(([, l]) => l.map(([id, , max]) => [id, max])));
+const ENCH_NAME = Object.fromEntries(ENCHANTS.flatMap(([, l]) => l.map(([id, n]) => [id, n])));
+// Item presets: sensible enchantments for common gear (max levels).
+const ENCH_PRESETS = {
+  sword: ['sharpness', 'looting', 'sweeping_edge', 'fire_aspect', 'unbreaking', 'mending'],
+  pickaxe: ['efficiency', 'fortune', 'unbreaking', 'mending'],
+  axe: ['efficiency', 'sharpness', 'unbreaking', 'mending'],
+  shovel: ['efficiency', 'unbreaking', 'mending'],
+  helmet: ['protection', 'respiration', 'aqua_affinity', 'unbreaking', 'mending'],
+  chestplate: ['protection', 'unbreaking', 'mending'],
+  leggings: ['protection', 'swift_sneak', 'unbreaking', 'mending'],
+  boots: ['protection', 'feather_falling', 'depth_strider', 'unbreaking', 'mending'],
+  bow: ['power', 'punch', 'flame', 'infinity', 'unbreaking'],
+  crossbow: ['quick_charge', 'multishot', 'unbreaking', 'mending'],
+  trident: ['loyalty', 'impaling', 'channeling', 'unbreaking', 'mending'],
+  mace: ['density', 'wind_burst', 'unbreaking', 'mending'],
+  fishing_rod: ['luck_of_the_sea', 'lure', 'unbreaking', 'mending'],
+  elytra: ['unbreaking', 'mending'],
+};
+const presetFor = (item) => { const id = item.replace(/^minecraft:/, ''); const k = Object.keys(ENCH_PRESETS).find((p) => id === p || id.endsWith('_' + p)); return k ? ENCH_PRESETS[k] : null; };
+/** Same syntax rules as the backend (playeractions.go) – only used for the preview. */
+function giveSyntax(item, ench, version) {
+  const ids = Object.keys(ench).sort();
+  const full = item.includes(':') ? item : `minecraft:${item}`;
+  if (!ids.length) return full;
+  const book = full === 'minecraft:enchanted_book';
+  const v = (/^(\d+)\.(\d+)(?:\.(\d+))?$/.exec(version || '') || []).slice(1).map((n) => +(n || 0));
+  const atLeast = (a, b, c) => !v.length || v[0] > a || (v[0] === a && (v[1] > b || (v[1] === b && v[2] >= c)));
+  const ns = (id) => (id.includes(':') ? id : `minecraft:${id}`);
+  if (!atLeast(1, 20, 5)) return `${full}{${book ? 'StoredEnchantments' : 'Enchantments'}:[${ids.map((id) => `{id:"${ns(id)}",lvl:${ench[id]}s}`).join(',')}]}`;
+  const inner = `{${ids.map((id) => `"${ns(id)}":${ench[id]}`).join(',')}}`;
+  return `${full}[${book ? 'stored_enchantments' : 'enchantments'}=${atLeast(1, 21, 5) ? inner : `{levels:${inner}}`}]`;
+}
 const DIMS = [['overworld', 'Oberwelt'], ['the_nether', 'Nether'], ['the_end', 'Ende']];
 const GM = [['survival', 'Überleben'], ['creative', 'Kreativ'], ['adventure', 'Abenteuer'], ['spectator', 'Zuschauer']];
 const itemName = (id) => { for (const [, list] of ITEMS) for (const [i, n] of list) if (i === id || `minecraft:${i}` === id) return n; return id; };
@@ -2013,14 +2056,64 @@ function openPlayerModal(s, player, { online = [], ops = new Set(), running = tr
       b.innerHTML = `<div class="pm-row"><input id="itQ" placeholder="Item suchen oder ID eingeben, z. B. diamond oder create:wrench" spellcheck="false" autocomplete="off">
           <div class="count"><button class="btn sm" data-c="1">1</button><button class="btn sm" data-c="16">16</button><button class="btn sm" data-c="64">64</button><input id="itN" type="number" min="1" max="6400" value="1"></div></div>
         <div class="items" id="itList"></div>
+        <details class="ench" id="enBox"><summary>${icon('star')}<span>Verzauberungen</span><small class="dim" id="enSum">optional</small></summary>
+          <div class="ench-body">
+            <div class="ench-rows" id="enRows"></div>
+            <div class="pm-row"><select id="enAdd"><option value="">Verzauberung hinzufügen …</option>${ENCHANTS.map(([g, l]) => `<optgroup label="${g}">${l.map(([id, n, max]) => `<option value="${id}">${n} (max. ${max})</option>`).join('')}</optgroup>`).join('')}<option value="__custom">Andere ID (z. B. aus Mods) …</option></select>
+              <button class="btn sm" id="enPreset" type="button" disabled title="Passende Verzauberungen in Höchststufe">${icon('star')}Beste für dieses Item</button></div>
+            <form class="pm-row hidden" id="enCustomRow"><input id="enCustom" placeholder="z. B. minecraft:sharpness oder mod:enchant" spellcheck="false"><button class="btn sm primary">${icon('plus')}Hinzufügen</button></form>
+            <div class="cmd-prev mono" id="enPrev"></div>
+          </div></details>
         <div class="pm-actions"><span class="grow dim small" id="itSel">Kein Item gewählt</span><button class="btn primary" id="itGive" disabled>${icon('box')}Geben</button></div>`;
       let sel = '';
+      const ench = {}; // id → level
+      const drawEnch = () => {
+        $('#enRows', m.el).innerHTML = Object.keys(ench).map((id) => `<div class="ench-row" data-en="${esc(id)}"><span class="grow"><b>${esc(ENCH_NAME[id] || id)}</b> <small class="mono dim">${esc(id.includes(':') ? id : 'minecraft:' + id)}</small></span>
+          <span class="lvl"><button type="button" class="btn sm icon" data-lv="-1" aria-label="Stufe senken">−</button><input type="number" min="1" max="255" value="${ench[id]}" aria-label="Stufe"><button type="button" class="btn sm icon" data-lv="1" aria-label="Stufe erhöhen">+</button></span>
+          ${ench[id] > (ENCH_MAX[id] || 255) ? `<span class="tag ev" title="Über der normalen Höchststufe ${ENCH_MAX[id]} – funktioniert per Befehl trotzdem">über max.</span>` : ''}
+          <button type="button" class="btn ghost sm icon" data-rm aria-label="Entfernen">${icon('x')}</button></div>`).join('') || '<div class="dim small">Keine – das Item wird ohne Verzauberung gegeben.</div>';
+        const n = Object.keys(ench).length;
+        $('#enSum', m.el).textContent = n ? `${n} gewählt` : 'optional';
+        const book = sel.replace(/^minecraft:/, '') === 'enchanted_book';
+        $('#enPrev', m.el).textContent = sel ? `/give ${player} ${giveSyntax(sel, ench, s.gameVersion)} ${$('#itN', m.el)?.value || 1}` : '';
+        $('#enPrev', m.el).title = s.gameVersion ? `Syntax für Minecraft ${s.gameVersion}${book ? ' (Buch: gespeicherte Verzauberungen)' : ''}` : 'Syntax für aktuelle Minecraft-Versionen';
+        $('#enPreset', m.el).disabled = !presetFor(sel || '');
+      };
+      $('#enAdd', m.el).addEventListener('change', (e) => {
+        let id = e.target.value;
+        e.target.value = '';
+        if (id === '__custom') { $('#enCustomRow', m.el).classList.remove('hidden'); $('#enCustom', m.el).focus(); return; }
+        if (id && !ench[id]) { ench[id] = ENCH_MAX[id] || 1; drawEnch(); }
+      });
+      $('#enCustomRow', m.el).addEventListener('submit', (e) => {
+        e.preventDefault();
+        const id = $('#enCustom', m.el).value.trim().toLowerCase().replace(/^minecraft:/, '');
+        if (!/^([a-z0-9_.-]+:)?[a-z0-9_./-]+$/.test(id)) { out('Ungültige Verzauberungs-ID', true); return; }
+        if (!ench[id]) ench[id] = ENCH_MAX[id] || 1;
+        $('#enCustom', m.el).value = ''; $('#enCustomRow', m.el).classList.add('hidden');
+        drawEnch();
+      });
+      $('#enPreset', m.el).addEventListener('click', () => { (presetFor(sel) || []).forEach((id) => { ench[id] = ENCH_MAX[id]; }); drawEnch(); });
+      $('#enRows', m.el).addEventListener('click', (e) => {
+        const row = e.target.closest('[data-en]'); if (!row) return;
+        const id = row.dataset.en;
+        if (e.target.closest('[data-rm]')) delete ench[id];
+        else if (e.target.closest('[data-lv]')) ench[id] = Math.min(255, Math.max(1, ench[id] + +e.target.closest('[data-lv]').dataset.lv));
+        else return;
+        drawEnch();
+      });
+      $('#enRows', m.el).addEventListener('change', (e) => {
+        const row = e.target.closest('[data-en]');
+        if (row && e.target.matches('input')) { ench[row.dataset.en] = Math.min(255, Math.max(1, Math.round(+e.target.value) || 1)); drawEnch(); }
+      });
       const list = $('#itList', m.el), q = $('#itQ', m.el), n = $('#itN', m.el);
       const pick = (id) => {
         sel = id;
         $$('.it', list).forEach((x) => x.classList.toggle('on', x.dataset.it === id));
         $('#itSel', m.el).innerHTML = id ? `<b>${esc(itemName(id))}</b> <span class="mono">${esc(id.includes(':') ? id : 'minecraft:' + id)}</span>` : 'Kein Item gewählt';
         $('#itGive', m.el).disabled = !id;
+        if (id && id.replace(/^minecraft:/, '') === 'enchanted_book') $('#enBox', m.el).open = true;
+        drawEnch();
       };
       const render = () => {
         const term = q.value.trim().toLowerCase();
@@ -2036,8 +2129,13 @@ function openPlayerModal(s, player, { online = [], ops = new Set(), running = tr
       q.addEventListener('input', render);
       q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const first = $('.it', list); if (first) { pick(first.dataset.it); $('#itGive', m.el).focus(); } } });
       list.addEventListener('click', (e) => { const x = e.target.closest('.it'); if (x) pick(x.dataset.it); });
-      $$('[data-c]', m.el).forEach((x) => x.addEventListener('click', () => { n.value = x.dataset.c; }));
-      $('#itGive', m.el).addEventListener('click', (e) => act({ action: 'give', item: sel, count: +n.value }, `${n.value}× ${itemName(sel)} gegeben`, e.currentTarget));
+      $$('[data-c]', m.el).forEach((x) => x.addEventListener('click', () => { n.value = x.dataset.c; drawEnch(); }));
+      n.addEventListener('input', drawEnch);
+      $('#itGive', m.el).addEventListener('click', (e) => {
+        const k = Object.keys(ench).length;
+        act({ action: 'give', item: sel, count: +n.value, enchantments: k ? { ...ench } : undefined }, `${n.value}× ${itemName(sel)}${k ? ` mit ${k} Verzauberung${k > 1 ? 'en' : ''}` : ''} gegeben`, e.currentTarget);
+      });
+      drawEnch();
       q.focus();
     } else if (curTab === 'tp') {
       const pos = info?.pos || ['', '', ''];

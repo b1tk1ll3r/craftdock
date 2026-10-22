@@ -554,3 +554,18 @@ input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-
 
 .count input { height: 28px; width: 76px; font-size: 13px; }
 .nc-top b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.ench { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.ench summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; font-weight: 500; list-style: none; }
+.ench summary::-webkit-details-marker { display: none; }
+.ench summary svg.i { color: #c4b5fd; }
+.ench summary small { margin-left: auto; }
+.ench[open] summary { border-bottom: 1px solid var(--border); }
+.ench-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.ench-rows { display: flex; flex-direction: column; gap: 4px; }
+.ench-row { display: flex; align-items: center; gap: 10px; padding: 4px 4px 4px 8px; border-radius: 8px; background: var(--surface-2); }
+.ench-row .lvl { display: flex; align-items: center; gap: 4px; }
+.ench-row .lvl input { width: 56px; height: 28px; text-align: center; padding: 0 4px; }
+.cmd-prev { font-size: 11.5px; color: var(--text-3); overflow-wrap: anywhere; padding: 6px 8px; border-radius: 6px; background: var(--surface); border: 1px dashed var(--border); }
+.cmd-prev:empty { display: none; }
+.items { max-height: 210px; }

@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,12 @@ type PlayerActionInput struct {
 	Amount    int      `json:"amount"`
 	Unit      string   `json:"unit"` // xp: levels | points
 	Message   string   `json:"message"`
+	// Enchantments for give: enchantment ID → level. Optional.
+	Enchantments map[string]int `json:"enchantments"`
+
+	// GameVersion of the target server (set by the backend, not the browser);
+	// decides the item syntax for enchantments.
+	GameVersion string `json:"-"`
 }
 
 var (
@@ -99,7 +106,11 @@ func buildPlayerCommands(in PlayerActionInput) ([]string, error) {
 		if in.Count < 1 || in.Count > 6400 {
 			return nil, badRequest("Anzahl: 1 bis 6400")
 		}
-		return []string{fmt.Sprintf("give %s %s %d", p, namespaced(item), in.Count)}, nil
+		spec, err := itemWithEnchantments(namespaced(item), in.Enchantments, in.GameVersion)
+		if err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("give %s %s %d", p, spec, in.Count)}, nil
 
 	case "tp-to":
 		t, err := target()
@@ -203,14 +214,19 @@ func rconFailure(out string) bool {
 }
 
 func (m *Manager) PlayerAction(ctx context.Context, name string, in PlayerActionInput) (string, error) {
+	c, err := m.find(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	if c.State != "running" {
+		return "", &APIError{http.StatusConflict, "Spieleraktionen gehen nur bei laufendem Server"}
+	}
+	in.GameVersion = m.resolvedVersion(ctx, c, configFromLabels(c.Labels))
 	cmds, err := buildPlayerCommands(in)
 	if err != nil {
 		return "", err
 	}
-	id, err := m.runningContainer(ctx, name)
-	if err != nil {
-		return "", &APIError{http.StatusConflict, "Spieleraktionen gehen nur bei laufendem Server"}
-	}
+	id := c.ID
 	var outs []string
 	for _, cmd := range cmds {
 		out, err := m.rcon(ctx, id, cmd)
@@ -320,4 +336,103 @@ func (m *Manager) PlayerInfo(ctx context.Context, name, player string) (PlayerIn
 		}
 	}
 	return info, nil
+}
+
+// ---- enchantments ------------------------------------------------------------------
+
+// Item syntax for enchantments changed twice:
+//   - before 1.20.5: NBT          diamond_sword{Enchantments:[{id:"minecraft:sharpness",lvl:5s}]}
+//   - 1.20.5–1.21.4: components   diamond_sword[enchantments={levels:{"minecraft:sharpness":5}}]
+//   - 1.21.5 and newer:           diamond_sword[enchantments={"minecraft:sharpness":5}]
+//
+// Enchanted books store theirs in StoredEnchantments / stored_enchantments.
+const (
+	enchNBT = iota
+	enchLevels
+	enchFlat
+)
+
+// versionAtLeast compares dotted release versions ("1.21.4", "26.1").
+// Snapshots and unknown versions count as newest.
+func versionAtLeast(v string, want ...int) bool {
+	if v == "" || snapshotRe.MatchString(v) {
+		return true
+	}
+	parts := strings.Split(gameVersion(v), ".")
+	if len(parts) < 2 {
+		return true
+	}
+	for i, w := range want {
+		n := 0
+		if i < len(parts) {
+			n, _ = strconv.Atoi(parts[i])
+		}
+		if n != w {
+			return n > w
+		}
+	}
+	return true
+}
+
+func enchantFormat(version string) int {
+	switch {
+	case versionAtLeast(version, 1, 21, 5):
+		return enchFlat
+	case versionAtLeast(version, 1, 20, 5):
+		return enchLevels
+	}
+	return enchNBT
+}
+
+func itemWithEnchantments(item string, ench map[string]int, version string) (string, error) {
+	if len(ench) == 0 {
+		return item, nil
+	}
+	if len(ench) > 40 {
+		return "", badRequest("Höchstens 40 Verzauberungen")
+	}
+	ids := make([]string, 0, len(ench))
+	levels := map[string]int{}
+	for id, lvl := range ench {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if !resourceIDRe.MatchString(id) {
+			return "", badRequest("Ungültige Verzauberung %q", id)
+		}
+		if lvl < 1 || lvl > 255 {
+			return "", badRequest("Stufe von %s: 1 bis 255", id)
+		}
+		id = namespaced(id)
+		if _, dup := levels[id]; !dup {
+			ids = append(ids, id)
+		}
+		levels[id] = lvl
+	}
+	sort.Strings(ids)
+	book := item == "minecraft:enchanted_book"
+	switch enchantFormat(version) {
+	case enchNBT:
+		key := "Enchantments"
+		if book {
+			key = "StoredEnchantments"
+		}
+		parts := make([]string, len(ids))
+		for i, id := range ids {
+			parts[i] = fmt.Sprintf(`{id:"%s",lvl:%ds}`, id, levels[id])
+		}
+		return fmt.Sprintf("%s{%s:[%s]}", item, key, strings.Join(parts, ",")), nil
+	default:
+		key := "enchantments"
+		if book {
+			key = "stored_enchantments"
+		}
+		parts := make([]string, len(ids))
+		for i, id := range ids {
+			parts[i] = fmt.Sprintf(`"%s":%d`, id, levels[id])
+		}
+		inner := "{" + strings.Join(parts, ",") + "}"
+		if enchantFormat(version) == enchLevels {
+			inner = "{levels:" + inner + "}"
+		}
+		return fmt.Sprintf("%s[%s=%s]", item, key, inner), nil
+	}
 }

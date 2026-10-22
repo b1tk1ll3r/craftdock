@@ -284,3 +284,31 @@ func TestKnownVersion(t *testing.T) {
 		t.Fatalf("fixed version = %q", v)
 	}
 }
+
+func TestEnchantments(t *testing.T) {
+	cases := []struct {
+		item, ver, want string
+		ench            map[string]int
+	}{
+		{"enchanted_book", "1.21.10", `give Steve minecraft:enchanted_book[stored_enchantments={"minecraft:unbreaking":3}] 1`, map[string]int{"unbreaking": 3}},
+		{"diamond_sword", "1.21.5", `give Steve minecraft:diamond_sword[enchantments={"minecraft:sharpness":5,"minecraft:unbreaking":3}] 1`, map[string]int{"unbreaking": 3, "sharpness": 5}},
+		{"diamond_sword", "", `give Steve minecraft:diamond_sword[enchantments={"minecraft:sharpness":5}] 1`, map[string]int{"sharpness": 5}},
+		{"diamond_sword", "26.1", `give Steve minecraft:diamond_sword[enchantments={"minecraft:sharpness":5}] 1`, map[string]int{"sharpness": 5}},
+		{"diamond_sword", "1.21.4", `give Steve minecraft:diamond_sword[enchantments={levels:{"minecraft:sharpness":5}}] 1`, map[string]int{"sharpness": 5}},
+		{"enchanted_book", "1.20.6", `give Steve minecraft:enchanted_book[stored_enchantments={levels:{"minecraft:mending":1}}] 1`, map[string]int{"mending": 1}},
+		{"bow", "1.20.4", `give Steve minecraft:bow{Enchantments:[{id:"minecraft:infinity",lvl:1s}]} 1`, map[string]int{"infinity": 1}},
+		{"enchanted_book", "1.19.4", `give Steve minecraft:enchanted_book{StoredEnchantments:[{id:"minecraft:mending",lvl:1s}]} 1`, map[string]int{"mending": 1}},
+		{"diamond_pickaxe", "1.21.4", `give Steve minecraft:diamond_pickaxe 1`, nil},
+	}
+	for _, tc := range cases {
+		cmds, err := buildPlayerCommands(PlayerActionInput{Action: "give", Player: "Steve", Item: tc.item, Count: 1, Enchantments: tc.ench, GameVersion: tc.ver})
+		if err != nil || cmds[0] != tc.want {
+			t.Errorf("%s @%s: got %v / %v\nwant %s", tc.item, tc.ver, cmds, err, tc.want)
+		}
+	}
+	for _, bad := range []map[string]int{{"sharp ness": 1}, {"sharpness": 0}, {"sharpness": 256}, {`x"]}`: 1}} {
+		if _, err := buildPlayerCommands(PlayerActionInput{Action: "give", Player: "Steve", Item: "stick", Count: 1, Enchantments: bad}); err == nil {
+			t.Errorf("accepted %v", bad)
+		}
+	}
+}
