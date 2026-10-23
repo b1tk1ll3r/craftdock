@@ -1,7 +1,9 @@
 package main
 
-// Small JSON-file persistence for site settings and player history.
-// Server configuration itself lives in Docker labels, not here.
+// Small JSON-file persistence for site settings, player history and a mirror
+// of every server configuration (the container label stays authoritative
+// while the container exists; the mirror allows restoring a server whose
+// container was removed outside CraftDock).
 
 import (
 	"encoding/json"
@@ -65,6 +67,8 @@ type Store struct {
 	stats    statsFile
 	news     []NewsItem
 	versions map[string]knownVer
+	configs  map[string]ServerConfig
+	hosting  HostingSettings
 }
 
 type knownVer struct {
@@ -107,6 +111,12 @@ func NewStore(dir string) *Store {
 	s.load("stats.json", &s.stats)
 	s.load("news.json", &s.news)
 	s.load("versions.json", &s.versions)
+	s.load("servers.json", &s.configs)
+	s.hosting = defaultHosting()
+	s.load("hosting.json", &s.hosting)
+	if s.configs == nil {
+		s.configs = map[string]ServerConfig{}
+	}
 	if s.versions == nil {
 		s.versions = map[string]knownVer{}
 	}
@@ -129,16 +139,77 @@ func (s *Store) load(name string, v any) {
 	}
 }
 
-func (s *Store) save(name string, v any) error {
+func (s *Store) save(name string, v any) error { return s.saveMode(name, v, 0o644) }
+
+func (s *Store) saveMode(name string, v any, mode os.FileMode) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(s.dir, name+".tmp")
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
+	return writeFileAtomic(filepath.Join(s.dir, name), b, mode)
+}
+
+// ---- server configuration mirror ----------------------------------------------------
+
+// SaveConfig mirrors a server configuration (contains secrets → 0600).
+func (s *Store) SaveConfig(c ServerConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old, ok := s.configs[c.Name]; ok && mustJSON(old) == mustJSON(c) {
+		return
 	}
-	return os.Rename(tmp, filepath.Join(s.dir, name))
+	s.configs[c.Name] = c
+	if err := s.saveMode("servers.json", s.configs, 0o600); err != nil {
+		log.Printf("WARNUNG: servers.json: %v", err)
+	}
+}
+
+func (s *Store) DeleteConfig(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.configs[name]; !ok {
+		return
+	}
+	delete(s.configs, name)
+	_ = s.saveMode("servers.json", s.configs, 0o600)
+}
+
+func (s *Store) Config(name string) (ServerConfig, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.configs[name]
+	return c, ok
+}
+
+func (s *Store) Configs() []ServerConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]ServerConfig, 0, len(s.configs))
+	for _, c := range s.configs {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Owner of a server according to the mirror ("" = nobody / unknown).
+func (s *Store) Owner(name string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configs[name].Owner
+}
+
+func (s *Store) Hosting() HostingSettings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.hosting
+}
+
+func (s *Store) SetHosting(h HostingSettings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hosting = h
+	return s.save("hosting.json", h)
 }
 
 func (s *Store) Settings() SiteSettings {

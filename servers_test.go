@@ -92,6 +92,8 @@ func TestModHelpers(t *testing.T) {
 
 func TestRoutesRegister(t *testing.T) {
 	d, _ := NewDocker("unix:///nonexistent")
-	a := &API{m: NewManager(d, "", NewStore(t.TempDir())), auth: NewAuth("a", "b", t.TempDir())}
+	dir := t.TempDir()
+	m := NewManager(d, "", NewStore(dir))
+	a := &API{m: m, auth: NewAuth(dir, "admin", "geheim-123456", false, NewRoles(dir)), alerts: NewAlerter(m, dir)}
 	_ = a.Routes() // panics on conflicting patterns
 }

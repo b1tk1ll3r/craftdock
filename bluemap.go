@@ -175,7 +175,7 @@ func (a *API) mapProxy(w http.ResponseWriter, r *http.Request) {
 	allowed := false
 	if s := a.m.store.Settings(); s.PublicEnabled && !cfg.PublicHidden {
 		allowed = true
-	} else if u := a.auth.User(r); u != nil && u.Can(PermView) && u.CanServer(name) {
+	} else if u := a.auth.User(r); u != nil && a.auth.CanServer(u, name, PermView) {
 		allowed = true
 	}
 	if !cfg.Map || !allowed {

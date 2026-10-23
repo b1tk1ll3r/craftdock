@@ -58,6 +58,14 @@ const ICONS = {
   calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.8-9.8M17 6l3 3M14.5 8.5l2 2"/>',
+  bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  phone: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  send2: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
 };
 const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 
@@ -80,23 +88,24 @@ const typeOf = (id) => TYPES.find((t) => t.id === id) || { id, label: id, short:
 
 const PHASES = {
   online: 'Online', starting: 'Startet', busy: 'Beschäftigt', stopped: 'Gestoppt',
-  unhealthy: 'Gestört', restarting: 'Neustart', paused: 'Pausiert', error: 'Fehler', sleeping: 'Schläft',
+  unhealthy: 'Gestört', restarting: 'Neustart', paused: 'Pausiert', error: 'Fehler', sleeping: 'Schläft', missing: 'Container fehlt',
 };
 const TASKS = {
   create: 'Wird erstellt', update: 'Wird aktualisiert', delete: 'Wird gelöscht', start: 'Startet',
   stop: 'Stoppt', restart: 'Startet neu', 'update-image': 'Image-Update', clone: 'Wird geklont',
-  reset: 'Neue Welt', import: 'Welt-Import', proxy: 'Proxy-Einrichtung',
+  reset: 'Neue Welt', import: 'Welt-Import', proxy: 'Proxy-Einrichtung', restore: 'Wird wiederhergestellt',
 };
 const RUNNING = ['online', 'starting', 'unhealthy', 'sleeping'];
 const PROXY_TYPES = ['PAPER', 'PURPUR', 'FOLIA', 'FABRIC', 'QUILT'];
 const MAP_TYPES = ['PAPER', 'PURPUR', 'FOLIA', 'SPIGOT', 'FABRIC', 'QUILT', 'FORGE', 'NEOFORGE', 'MODRINTH'];
-const ROLES = {
-  admin: ['Administrator', 'Alles, inklusive Benutzer, Netzwerk und öffentliche Seite'],
-  operator: ['Operator', 'Server anlegen, konfigurieren, Mods, Welt, Backups – nicht löschen'],
-  moderator: ['Moderator', 'Starten/Stoppen, Konsole, Spielerverwaltung, Neuigkeiten'],
-  viewer: ['Beobachter', 'Nur ansehen: Status, Logs, Spieler'],
-};
-const can = (p) => !!state.me && state.me.perms.includes(p);
+/** Panel-wide permission of the logged-in user. */
+const can = (p) => !!state.me && (state.me.perms || []).includes(p);
+/** Permission on a server (the role the user holds there). */
+const canS = (p, s = current()) => !!s && (s.perms || []).includes(p);
+/** Permission the user will have on servers he creates himself. */
+const canNew = (p) => !!state.me && (state.me.serverPerms || []).includes(p);
+/** May touch host-level settings (ports, env, data path, network) of a server. */
+const advFor = (s) => s ? canS('server.advanced', s) : canNew('server.advanced');
 
 const SECTIONS = [
   { id: 'general', title: 'Allgemein', desc: 'Plattform, Version und Name des Servers', fields: [
@@ -111,7 +120,7 @@ const SECTIONS = [
   { id: 'network', title: 'Netzwerk', desc: 'Erreichbarkeit von außen', fields: [
     { k: 'port', label: 'Host-Port', type: 'number', min: 1, max: 65535, hint: 'Port, unter dem Spieler verbinden (Standard 25565)' },
     { k: 'onlineMode', label: 'Online-Modus', type: 'toggle', hint: 'Mojang/Microsoft-Konten prüfen (empfohlen)' },
-    { k: 'network', label: 'Velocity-Netzwerk', type: 'netselect', full: true, types: PROXY_TYPES, hint: 'Im Netzwerk ist der Server nur über den Proxy erreichbar (der Host-Port wird nicht veröffentlicht, die Anmeldung prüft der Proxy). Wechsel im Spiel mit /server <name>. Ein Server kann nur in einem Netzwerk sein.' },
+    { k: 'network', label: 'Velocity-Netzwerk', type: 'netselect', full: true, adv: true, types: PROXY_TYPES, hint: 'Im Netzwerk ist der Server nur über den Proxy erreichbar (der Host-Port wird nicht veröffentlicht, die Anmeldung prüft der Proxy). Wechsel im Spiel mit /server <name>. Ein Server kann nur in einem Netzwerk sein.' },
   ] },
   { id: 'gameplay', title: 'Gameplay', desc: 'Spielregeln für alle Spieler', fields: [
     { k: 'gamemode', label: 'Spielmodus', type: 'select', options: [['survival', 'Überleben'], ['creative', 'Kreativ'], ['adventure', 'Abenteuer'], ['spectator', 'Zuschauer']] },
@@ -132,7 +141,7 @@ const SECTIONS = [
   ] },
   { id: 'resources', title: 'Ressourcen', desc: 'Speicher, CPU und Neustartverhalten', fields: [
     { k: 'memory', label: 'Java-Speicher (Heap)', type: 'text', placeholder: '4G', hint: 'z. B. 2G, 4G, 6144M' },
-    { k: 'memoryLimitMB', label: 'Container-RAM-Limit (MB)', type: 'number', min: 0, hint: '0 = kein hartes Limit; sonst ≥ Heap + 256 MB' },
+    { k: 'memoryLimitMB', label: 'Container-RAM-Limit (MB)', type: 'number', min: 0, adv: true, hint: '0 = kein hartes Limit; sonst ≥ Heap + 256 MB' },
     { k: 'cpus', label: 'CPU-Limit (Kerne)', type: 'number', min: 0, step: 0.5, hint: '0 = unbegrenzt' },
     { k: 'restartPolicy', label: 'Neustart-Richtlinie', type: 'select', options: [['unless-stopped', 'unless-stopped (empfohlen)'], ['always', 'always'], ['on-failure', 'on-failure'], ['no', 'no']] },
     { k: 'idleMode', label: 'Bei Leerlauf', type: 'select', options: [['', 'Weiterlaufen'], ['pause', 'Pausieren – wacht beim Verbinden auf'], ['stop', 'Container stoppen']], hint: 'Pausieren spart CPU und hält den Server sofort bereit. Stoppen gibt auch den RAM frei, der Server muss dann aber manuell gestartet werden.' },
@@ -149,9 +158,10 @@ const SECTIONS = [
     { k: 'description', label: 'Beschreibung', type: 'textarea', full: true, placeholder: 'Worum geht es auf diesem Server? Regeln, Besonderheiten, Events …' },
   ] },
   { id: 'advanced', title: 'Erweitert', desc: 'Daten, zusätzliche Ports und Umgebungsvariablen', fields: [
-    { k: 'dataPath', label: 'Datenpfad auf dem Host', type: 'text', newOnly: true, placeholder: 'leer = Docker-Volume mc-<name>-data', hint: 'Absoluter Pfad, z. B. /srv/minecraft/survival' },
+    { k: 'owner', label: 'Besitzer (Kunde)', type: 'owner', hint: 'Der Besitzer verwaltet den Server mit seiner Rolle; der Server zählt auf seine Quote. Leer = Team-Server ohne Besitzer.' },
+    { k: 'dataPath', label: 'Datenpfad auf dem Host', type: 'text', newOnly: true, adv: true, placeholder: 'leer = Docker-Volume mc-<name>-data', hint: 'Absoluter Pfad, z. B. /srv/minecraft/survival' },
     { k: 'icon', label: 'Server-Icon (URL)', type: 'text', placeholder: 'https://…/icon.png' },
-    { k: 'ports', label: 'Zusätzliche Ports', type: 'ports', full: true, hint: 'z. B. 19132/udp für Geyser oder 8100/tcp für BlueMap' },
+    { k: 'ports', label: 'Zusätzliche Ports', type: 'ports', full: true, rangeOnly: true, hint: 'z. B. 19132/udp für Geyser oder 8100/tcp für BlueMap' },
     { k: 'extraEnv', label: 'Umgebungsvariablen', type: 'env', full: true, hint: 'Alle Optionen des Images itzg/minecraft-server, z. B. SPAWN_PROTECTION, ALLOW_FLIGHT, USE_AIKAR_FLAGS' },
   ] },
 ];
@@ -162,7 +172,7 @@ const DEFAULTS = {
   seed: '', levelType: '', ops: '', whitelist: '', enforceWhitelist: false, memory: '4G', memoryLimitMB: 0,
   cpus: 0, restartPolicy: 'unless-stopped', modrinthProjects: '', icon: '', dataPath: '', extraEnv: {}, ports: [],
   modpack: '', cfApiKey: '', publicHidden: false, displayName: '', description: '', publicAddress: '',
-  idleMode: '', idleMinutes: 10, map: false, mapPort: 0, network: '',
+  idleMode: '', idleMinutes: 10, map: false, mapPort: 0, network: '', owner: '',
 };
 
 /* ---------- State ---------- */
@@ -182,10 +192,13 @@ async function api(method, path, body) {
   if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
   let res;
   try { res = await fetch(path, opt); } catch { throw new Error('CraftDock ist nicht erreichbar'); }
-  if (res.status === 401 && path !== '/api/login') { showLogin(); throw new Error('Sitzung abgelaufen'); }
+  if (res.status === 401 && !path.startsWith('/api/login') && path !== '/api/register') { showLogin(); throw new Error('Sitzung abgelaufen'); }
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  if (!res.ok) {
+    if (data && data.code === '2fa_setup' && state.me && !state.forcing2fa) forced2FA();
+    throw new Error((data && data.error) || res.statusText);
+  }
   return data;
 }
 
@@ -198,13 +211,13 @@ function toast(msg, kind = 'ok') {
   setTimeout(() => { el.classList.add('leave'); setTimeout(() => el.remove(), 250); }, kind === 'err' ? 6500 : 3500);
 }
 
-function openOverlay(inner, { drawer = false, onClose } = {}) {
+function openOverlay(inner, { drawer = false, onClose, sticky = false } = {}) {
   const ov = document.createElement('div');
   ov.className = 'overlay' + (drawer ? ' drawer-wrap' : '');
   ov.innerHTML = inner;
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); onClose && onClose(); };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  const onKey = (e) => { if (e.key === 'Escape' && !sticky && ov === $('#modalRoot').lastElementChild) close(); };
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov && !sticky) close(); });
   document.addEventListener('keydown', onKey);
   $$('[data-close]', ov).forEach((b) => b.addEventListener('click', close));
   $('#modalRoot').appendChild(ov);
@@ -275,11 +288,17 @@ async function boot() {
   $('#btnLogout').addEventListener('click', async () => { try { await api('POST', '/api/logout'); } catch { /* */ } showLogin(); });
   $('#scrim').addEventListener('click', closeNav);
   $('#loginForm').addEventListener('submit', onLogin);
+  $('#twofaForm').addEventListener('submit', onLogin2FA);
+  $('#twofaBack').addEventListener('click', () => { $('#twofaForm').classList.add('hidden'); $('#loginForm').classList.remove('hidden'); });
+  $('#regLink').addEventListener('click', (e) => { e.preventDefault(); showRegister(''); });
   window.addEventListener('hashchange', fromHash);
   window.addEventListener('beforeunload', (e) => { if (state.configDirty || state.fileDirty) { e.preventDefault(); e.returnValue = ''; } });
 
+  const reg = /#register=([0-9a-f]+)/.exec(location.hash);
   try {
     const s = await api('GET', '/api/session');
+    if (reg && !s.authenticated) { showRegister(reg[1]); return; }
+    state.registration = s.registration;
     s.authenticated ? showApp(s) : showLogin();
   } catch { showLogin(); }
 }
@@ -290,6 +309,10 @@ function showLogin() {
   $('#boot').classList.add('hidden');
   $('#app').classList.add('hidden');
   $('#login').classList.remove('hidden');
+  $('#register').classList.add('hidden');
+  $('#twofaForm').classList.add('hidden');
+  $('#loginForm').classList.remove('hidden');
+  $('#regLink').classList.toggle('hidden', state.registration !== 'open');
   setTimeout(() => $('#loginForm [name=password]').focus(), 30);
 }
 
@@ -300,20 +323,46 @@ async function onLogin(e) {
   try {
     const r = await api('POST', '/api/login', { username: f.username.value, password: f.password.value });
     f.password.value = '';
+    if (r.twofa) {
+      state.ticket = r.ticket;
+      f.classList.add('hidden');
+      $('#twofaForm').classList.remove('hidden');
+      $('#twofaError').classList.add('hidden');
+      $('#twofaForm [name=code]').value = '';
+      setTimeout(() => $('#twofaForm [name=code]').focus(), 30);
+      return;
+    }
     showApp(r);
   } catch (ex) {
     err.textContent = ex.message; err.classList.remove('hidden');
   } finally { btn.disabled = false; }
 }
 
+async function onLogin2FA(e) {
+  e.preventDefault();
+  const f = e.target, btn = $('button[type=submit]', f), err = $('#twofaError');
+  btn.disabled = true; err.classList.add('hidden');
+  try {
+    const r = await api('POST', '/api/login/2fa', { ticket: state.ticket, code: f.code.value.trim() });
+    state.ticket = null;
+    showApp(r);
+  } catch (ex) {
+    err.textContent = ex.message; err.classList.remove('hidden');
+    if (/abgelaufen/.test(ex.message)) setTimeout(() => showLogin(), 1500);
+  } finally { btn.disabled = false; }
+}
+
 async function showApp(me) {
   state.me = me;
   state.user = me.user;
-  $('#btnNew').classList.toggle('hidden', !can('create') || (me.servers || []).length > 0);
+  $('#register').classList.add('hidden');
+  if (/#register=/.test(location.hash)) history.replaceState(null, '', '#/');
+  $('#btnNew').classList.toggle('hidden', !can('servers.create'));
   renderSideNav();
   $('#boot').classList.add('hidden');
   $('#login').classList.add('hidden');
   $('#app').classList.remove('hidden');
+  if (me.needs2fa) { forced2FA(); return; }
   loadInfo();
   loadNetworks().then(() => { renderSidebar(); updateHeader(true); });
   api('GET', '/api/versions').then((v) => { state.versions = v; fillVersionLists(); }).catch(() => {});
@@ -332,6 +381,7 @@ async function loadInfo() {
   try { state.info = await api('GET', '/api/info'); } catch { state.info = null; }
   const el = $('#hostInfo'), i = state.info;
   if (!i) { el.innerHTML = ''; return; }
+  if (!i.docker && i.dockerOk) { el.innerHTML = quotaHTML(); applyWidths(el); return; } // customers: no host details
   if (!i.dockerOk) {
     el.innerHTML = `<div class="row"><span class="dot error"></span><b>Docker nicht erreichbar</b></div>`;
     return;
@@ -340,7 +390,7 @@ async function loadInfo() {
   el.innerHTML = `
     <div class="row"><span class="dot online"></span><b>Docker ${esc(d.ServerVersion)}</b></div>
     <div class="row">${icon('cpu')} ${d.NCPU} CPUs · ${fmtBytes(d.MemTotal)} RAM</div>
-    <div class="row dim">CraftDock ${esc(i.version)} · ${esc(state.user)} (${esc(ROLES[state.me.role]?.[0] || state.me.role)})</div>`;
+    <div class="row dim">CraftDock ${esc(i.version)} · ${esc(state.user)} (${esc(state.me.roleName || state.me.role)})</div>`;
 }
 
 /* =====================================================================
@@ -392,7 +442,7 @@ function setHash() {
 
 function fromHash(initial) {
   const [, name, tab] = location.hash.split('/');
-  if (name && name.startsWith('_') && PAGES[name.slice(1)]) {
+  if (name && name.startsWith('_') && PAGES[name.slice(1)] && pageAllowed(PAGES[name.slice(1)])) {
     if (state.page !== name.slice(1)) openPage(name.slice(1));
     return;
   }
@@ -464,17 +514,17 @@ function renderMain() {
       <div class="empty"><div class="box">
         <div class="art"><span class="logo"></span></div>
         <h2>${state.servers.length ? 'Server auswählen' : 'Willkommen bei CraftDock'}</h2>
-        <p>${state.servers.length ? 'Wähle links einen Server aus.' : 'Lege deinen ersten Minecraft-Server an. CraftDock lädt das Image, erstellt den Container und startet ihn – die Welt liegt sicher in einem eigenen Volume.'}</p>
-        ${state.servers.length || !can('create') ? '' : `<button class="btn primary" id="btnEmptyNew" ${err ? 'disabled' : ''}>${icon('plus')}Ersten Server erstellen</button>`}
+        <p>${state.servers.length ? 'Wähle links einen Server aus.' : can('servers.create') ? 'Lege deinen ersten Minecraft-Server an. CraftDock lädt das Image, erstellt den Container und startet ihn – die Welt liegt sicher in einem eigenen Volume.' : 'Dir ist noch kein Server zugewiesen. Sobald dich jemand zu einem Server hinzufügt, erscheint er hier.'}</p>
+        ${state.servers.length || !can('servers.create') ? '' : `<button class="btn primary" id="btnEmptyNew" ${err ? 'disabled' : ''}>${icon('plus')}Ersten Server erstellen</button>`}
       </div></div>`;
     $('#btnEmptyNew')?.addEventListener('click', () => openCreate());
     $('#btnNav')?.addEventListener('click', openNav);
     return;
   }
   main.dataset.view = 'server';
-  const tabs = [['overview', 'Übersicht', 'grid', 'view'], ['console', 'Konsole', 'terminal', 'view'], ['players', 'Spieler', 'users', 'view'],
-    ['mods', 'Mods & Plugins', 'puzzle', 'configure'], ['world', 'Welt', 'earth', 'configure'], ['config', 'Konfiguration', 'sliders', 'configure'], ['files', 'Dateien', 'file', 'configure']]
-    .filter((t) => can(t[3]));
+  const tabs = (s.missing ? [['overview', 'Übersicht', 'grid', 'server.view']] : [['overview', 'Übersicht', 'grid', 'server.view'], ['console', 'Konsole', 'terminal', 'server.view'], ['players', 'Spieler', 'users', 'server.view'],
+    ['mods', 'Mods & Plugins', 'puzzle', 'server.view'], ['world', 'Welt', 'earth', ['server.world', 'server.backup']], ['config', 'Konfiguration', 'sliders', 'server.configure'], ['files', 'Dateien', 'file', 'server.files']])
+    .filter((t) => [].concat(t[3]).some((p) => canS(p, s)));
   if (!tabs.some((t) => t[0] === state.tab)) state.tab = 'overview';
   main.innerHTML = `${mobileBar()}
     <header class="srv-head">
@@ -500,7 +550,7 @@ function updateHeader(force) {
   const s = current();
   if (!s || !$('#hdPill')) return;
   const c = s.config, t = typeOf(c.type);
-  const key = JSON.stringify([s.phase, s.task, c, s.health, s.containerId, s.gameVersion, (state.networks || []).length]);
+  const key = JSON.stringify([s.phase, s.task, c, s.health, s.containerId, s.gameVersion, (state.networks || []).length, s.maintenance]);
   if (!force && $('#main').dataset.hk === key) return;
   $('#main').dataset.hk = key;
 
@@ -513,11 +563,15 @@ function updateHeader(force) {
     c.map ? `<span class="chip">${icon('map')}Live-Karte</span>` : '',
     c.idleMode ? `<span class="chip">${icon('moon')}${c.idleMode === 'pause' ? 'Auto-Pause' : 'Auto-Stopp'} ${c.idleMinutes} Min</span>` : '',
     `<span class="chip">${icon('memory')}${esc(c.memory)}</span>`,
+    c.owner && c.owner !== state.user ? `<span class="chip" title="Besitzer">${icon('user')}${esc(c.owner)}</span>` : '',
+    s.maintenance ? `<span class="chip warn" title="Alarme stumm bis ${esc(fmtTime(s.maintenance))}">${icon('wrench')}Wartung bis ${esc(new Date(s.maintenance * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }))}</span>` : '',
   ].join('');
 
   const busy = s.phase === 'busy', exists = !!s.containerId, running = RUNNING.includes(s.phase) || s.phase === 'restarting';
-  const ctl = can('control');
-  $('#hdActions').innerHTML = `
+  const ctl = canS('server.control');
+  $('#hdActions').innerHTML = s.missing ? `
+    ${ctl ? `<button class="btn primary" data-act="restore" ${busy ? 'disabled' : ''}>${icon('refresh')}<span class="lbl">Wiederherstellen</span></button>` : ''}
+    ${canS('server.delete') ? `<button class="btn danger" id="btnForget" ${busy ? 'disabled' : ''}>${icon('trash')}<span class="lbl">Entfernen</span></button>` : ''}` : `
     ${!ctl ? '' : running
       ? `<button class="btn" data-act="stop" ${busy ? 'disabled' : ''}>${icon('stop')}<span class="lbl">Stoppen</span></button>
          <button class="btn" data-act="restart" ${busy ? 'disabled' : ''}>${icon('restart')}<span class="lbl">Neustart</span></button>`
@@ -526,7 +580,8 @@ function updateHeader(force) {
       <button class="btn icon" id="btnMore" aria-label="Weitere Aktionen" ${exists ? '' : 'disabled'}>${icon('more')}</button>
     </div>`;
   $$('[data-act]', $('#hdActions')).forEach((b) => b.addEventListener('click', () => doAction(b.dataset.act)));
-  $('#btnMore').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+  $('#btnMore')?.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+  $('#btnForget')?.addEventListener('click', openDelete);
 
   const task = s.task;
   const tb = $('#hdTask');
@@ -546,17 +601,17 @@ function toggleMenu() {
   const m = document.createElement('div');
   m.className = 'menu';
   const pub = s.config.publicHidden ? 'disabled title="Server ist nicht öffentlich"' : '';
-  const unrestricted = !(state.me.servers || []).length;
   m.innerHTML = `
-    ${can('backup') ? `<button data-m="backup">${icon('download')}Backup herunterladen</button>` : ''}
-    ${can('configure') ? `<button data-m="image" ${busy ? 'disabled' : ''}>${icon('refresh')}Image aktualisieren</button>` : ''}
-    ${can('create') && unrestricted ? `<button data-m="clone" ${busy ? 'disabled' : ''}>${icon('clone')}Server klonen</button>` : ''}
+    ${canS('server.backup') ? `<button data-m="backup">${icon('download')}Backup herunterladen</button>` : ''}
+    ${canS('server.configure') ? `<button data-m="image" ${busy ? 'disabled' : ''}>${icon('refresh')}Image aktualisieren</button>` : ''}
+    ${can('servers.create') && canS('server.configure') ? `<button data-m="clone" ${busy ? 'disabled' : ''}>${icon('clone')}Server klonen</button>` : ''}
+    ${canS('server.control') ? `<button data-m="maint">${icon('wrench')}${s.maintenance ? 'Wartungsmodus beenden' : 'Wartungsmodus …'}</button>` : ''}
     <button data-m="copy">${icon('copy')}Adresse kopieren</button>
     <hr>
     <button data-m="public" ${pub}>${icon('external')}Öffentliches Dashboard</button>
     ${s.config.map ? `<button data-m="map">${icon('map')}Live-Karte öffnen</button>` : ''}
     <button data-m="embed" ${pub}>${icon('code')}Widget &amp; Badge einbetten</button>
-    ${can('delete') ? `<hr><button data-m="delete" class="danger" ${busy ? 'disabled' : ''}>${icon('trash')}Server löschen</button>` : ''}`;
+    ${canS('server.delete') ? `<hr><button data-m="delete" class="danger" ${busy ? 'disabled' : ''}>${icon('trash')}Server löschen</button>` : ''}`;
   wrap.appendChild(m);
   const off = (e) => { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('click', off); } };
   setTimeout(() => document.addEventListener('click', off));
@@ -564,7 +619,7 @@ function toggleMenu() {
     const b = e.target.closest('button'); if (!b || b.disabled) return;
     m.remove(); document.removeEventListener('click', off);
     ({ backup: doBackup, image: doImageUpdate, copy: () => copyText(hostAddr(s.config.port)), delete: openDelete,
-      clone: openClone, embed: openEmbed, map: () => window.open(`/map/${encodeURIComponent(s.name)}/`, '_blank', 'noopener'),
+      clone: openClone, embed: openEmbed, maint: () => openMaintenance(s), map: () => window.open(`/map/${encodeURIComponent(s.name)}/`, '_blank', 'noopener'),
       public: () => window.open(`/s/${encodeURIComponent(s.name)}`, '_blank', 'noopener') })[b.dataset.m]();
   });
 }
@@ -763,12 +818,12 @@ function renderConsole(body) {
       <div class="console-bar">
         <div class="status" id="conStatus"></div>
         <div class="grow"></div>
-        <div class="btn-group ${can('console') ? '' : 'hidden'}">${QUICK.map(([c, l]) => `<button class="btn sm" data-q="${esc(c)}" title="/${esc(c)}">${esc(l)}</button>`).join('')}</div>
+        <div class="btn-group ${canS('server.console') ? '' : 'hidden'}">${QUICK.map(([c, l]) => `<button class="btn sm" data-q="${esc(c)}" title="/${esc(c)}">${esc(l)}</button>`).join('')}</div>
         <button class="btn sm icon" id="conScroll" title="Automatisch scrollen">${icon('arrowDown')}</button>
         <button class="btn sm icon" id="conClear" title="Ausgabe leeren">${icon('eraser')}</button>
       </div>
       <div class="console-out" id="conOut" role="log" aria-live="polite"></div>
-      <form class="console-in ${can('console') ? '' : 'hidden'}" id="conForm" autocomplete="off">
+      <form class="console-in ${canS('server.console') ? '' : 'hidden'}" id="conForm" autocomplete="off">
         <span class="prompt">›</span>
         <input id="conIn" placeholder="${RUNNING.includes(s.phase) ? 'Befehl ohne / eingeben, z. B. say Hallo zusammen' : 'Server ist offline'}" spellcheck="false">
         <button class="btn primary" type="submit">${icon('send')}<span class="lbl">Senden</span></button>
@@ -860,7 +915,28 @@ function fillVersionLists() {
   });
 }
 
-function fieldHTML(f, cfg, isNew) {
+/** Context of the config form: what the user may change. */
+function formCtx(s) {
+  const h = state.me?.hosting || {};
+  return { adv: advFor(s), assign: can('users') && state.me?.allServers, range: h.portMin ? [h.portMin, h.portMax] : null };
+}
+
+function fieldHTML(f, cfg, isNew, ctx = formCtx()) {
+  if (f.adv && !ctx.adv) return '';
+  if (f.type === 'owner' && !ctx.assign) return '';
+  if (!ctx.adv && !state.me?.hosting?.customerPublic && ['publicHidden', 'displayName', 'publicAddress', 'description'].includes(f.k)) return '';
+  if (!ctx.adv && (f.k === 'mapPort' || f.rangeOnly) && !ctx.range) return '';
+  if (!ctx.adv && ctx.range && (f.k === 'port' || f.k === 'mapPort' || f.rangeOnly)) {
+    f = { ...f, hint: `${f.k === 'port' ? 'Leer lassen = automatisch. ' : ''}Erlaubte Host-Ports: ${ctx.range[0]}–${ctx.range[1]}` };
+  }
+  if (!ctx.adv && f.k === 'memory') {
+    const mx = state.me?.hosting?.maxServerMB;
+    f = { ...f, hint: `${f.hint}. Das Container-Limit wird automatisch passend gesetzt${mx ? ` – höchstens ${mx} MB pro Server` : ''}.` };
+  }
+  if (!ctx.adv && f.k === 'extraEnv') f = { ...f, hint: `${f.hint}. Speicher-, RCON- und JVM-Variablen setzt nur ein Administrator.` };
+  if (f.type === 'owner') {
+    f = { ...f, type: 'text', placeholder: 'kein Besitzer', list: 'dl-users' };
+  }
   const html = fieldInner(f, cfg, isNew);
   return f.types ? `<div class="cond ${f.full || f.type === 'types' ? 'full' : ''}" data-for-types="${f.types.join(',')}">${html}</div>` : html;
 }
@@ -887,7 +963,7 @@ function fieldInner(f, cfg, isNew) {
     case 'select':
       return `<label class="${cls}"><span>${esc(f.label)}</span><select data-k="${f.k}">${f.options.map(([o, l]) => `<option value="${esc(o)}" ${o === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}${f.options.some(([o]) => o === v) ? '' : `<option value="${esc(v)}" selected>${esc(v)}</option>`}</select>${hint}</label>`;
     case 'number':
-      return `<label class="${cls}"><span>${esc(f.label)}</span><input type="number" data-k="${f.k}" value="${esc(v)}" ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} step="${f.step || 1}">${hint}</label>`;
+      return `<label class="${cls}"><span>${esc(f.label)}</span><input type="number" data-k="${f.k}" value="${v === 0 && f.k === 'port' ? '' : esc(v)}" ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} step="${f.step || 1}">${hint}</label>`;
     case 'list':
       return `<label class="${cls}"><span>${esc(f.label)}</span><textarea data-k="${f.k}" data-list rows="3" placeholder="${esc(f.placeholder || '')}" spellcheck="false">${esc((v || '').split(',').filter(Boolean).join('\n'))}</textarea>${hint}</label>`;
     case 'version':
@@ -904,7 +980,7 @@ function fieldInner(f, cfg, isNew) {
         ${Object.entries(v || {}).map(([k, val]) => envRow(k, val)).join('')}</div>
         <div><button type="button" class="btn sm" data-add="env">${icon('plus')}Variable hinzufügen</button></div>${hint}</div>`;
     default:
-      return `<label class="${cls}"><span>${esc(f.label)}</span><input type="text" data-k="${f.k}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${dis} spellcheck="false">${hint}</label>`;
+      return `<label class="${cls}"><span>${esc(f.label)}</span><input type="text" data-k="${f.k}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.list ? `list="${f.list}"` : ''} ${dis} spellcheck="false">${hint}</label>`;
   }
 }
 const portRow = (p = { host: '', container: '', protocol: 'tcp' }) => `<div class="row-edit ports" data-row>
@@ -917,17 +993,28 @@ const envRow = (k = '', v = '') => `<div class="row-edit env" data-row>
   <input data-f="value" value="${esc(v)}" placeholder="0" spellcheck="false">
   <button type="button" class="btn icon ghost" data-del aria-label="Entfernen">${icon('x')}</button></div>`;
 
-function configFormHTML(cfg, isNew) {
+function configFormHTML(cfg, isNew, ctx = formCtx()) {
+  const secs = SECTIONS.map((sec) => ({ sec, html: sec.fields.map((f) => fieldHTML(f, cfg, isNew, ctx)).join('') })).filter((x) => x.html.trim());
+  if (ctx.assign) loadUserList();
   return `<div class="config">
-    <nav class="config-nav">${SECTIONS.map((s) => `<a href="#sec-${s.id}" data-sec="${s.id}">${s.title}</a>`).join('')}</nav>
+    <nav class="config-nav">${secs.map(({ sec }) => `<a href="#sec-${sec.id}" data-sec="${sec.id}">${sec.title}</a>`).join('')}</nav>
     <div class="config-sections">
-      ${SECTIONS.map((sec) => `<section class="fsec" id="sec-${sec.id}">
+      ${secs.map(({ sec, html }) => `<section class="fsec" id="sec-${sec.id}">
         <header><h3>${sec.title}</h3><p>${esc(sec.desc)}</p></header>
-        <div class="fgrid">${sec.fields.map((f) => fieldHTML(f, cfg, isNew)).join('')}</div>
+        <div class="fgrid">${html}</div>
       </section>`).join('')}
     </div>
-    <datalist id="dl-versions"></datalist>
+    <datalist id="dl-versions"></datalist><datalist id="dl-users">${(state.userList || []).map((u) => `<option value="${esc(u)}">`).join('')}</datalist>
   </div>`;
+}
+
+async function loadUserList() {
+  if (state.userList) return;
+  try {
+    const d = await api('GET', '/api/users');
+    state.userList = d.users.map((u) => u.username);
+    $$('#dl-users').forEach((dl) => { dl.innerHTML = state.userList.map((u) => `<option value="${esc(u)}">`).join(''); });
+  } catch { state.userList = []; }
 }
 
 function updateConditional(root) {
@@ -992,7 +1079,7 @@ function renderConfig(body) {
   const s = current();
   const base = { ...DEFAULTS, ...s.config };
   const formCfg = { ...base, _cfKeySet: s.cfKeySet };
-  body.innerHTML = `${configFormHTML(formCfg, false)}
+  body.innerHTML = `${configFormHTML(formCfg, false, formCtx(s))}
     <div class="savebar">
       <span class="state" id="cfgState">Keine Änderungen</span>
       <button class="btn" id="cfgReset" disabled>Verwerfen</button>
@@ -1048,11 +1135,13 @@ function nextFreePort() {
 
 function openCreate() {
   if (!state.versions) api('GET', '/api/versions').then((v) => { state.versions = v; fillVersionLists(); }).catch(() => {});
-  const cfg = { ...DEFAULTS, port: nextFreePort(), name: state.servers.length ? '' : 'survival' };
+  const ctx = formCtx(null);
+  const cfg = { ...DEFAULTS, port: !ctx.adv && ctx.range ? 0 : nextFreePort(), name: state.servers.length ? '' : 'survival' };
+  if (!ctx.adv) cfg.memory = '2G';
   const m = openOverlay(`<div class="drawer" role="dialog" aria-modal="true">
     <header><span class="type-badge sm">${icon('plus')}</span><h2>Neuer Server</h2><button class="btn ghost icon" data-close aria-label="Schließen">${icon('x')}</button></header>
-    <div class="body">${configFormHTML(cfg, true)}</div>
-    <footer><span class="grow dim" id="crHint">EULA wird automatisch akzeptiert (minecraft.net/eula).</span><button class="btn" data-close>Abbrechen</button><button class="btn primary" id="crGo">${icon('play')}Erstellen & starten</button></footer>
+    <div class="body">${configFormHTML(cfg, true, ctx)}</div>
+    <footer><span class="grow dim" id="crHint">${quotaLine() || 'EULA wird automatisch akzeptiert (minecraft.net/eula).'}</span><button class="btn" data-close>Abbrechen</button><button class="btn primary" id="crGo">${icon('play')}Erstellen & starten</button></footer>
   </div>`, { drawer: true });
   const root = $('.config', m.el);
   bindConfigForm(root, () => { $('[data-k=name]', root).classList.remove('invalid'); });
@@ -1166,7 +1255,7 @@ async function renderMods(body) {
   let refs = [...original];
   const meta = Object.fromEntries(info.projects.map((p) => [p.ref, p]));
 
-  body.innerHTML = `<div class="stack mods-page">
+  body.innerHTML = `<div class="stack mods-page${canS('server.mods', s) ? '' : ' readonly'}">
     <div class="mods-head">
       <div class="chips">
         <span class="chip">${icon('box')}${esc(typeOf(s.config.type).label)}</span>
@@ -1370,19 +1459,22 @@ async function openSiteSettings() {
    v1.2 – side navigation & pages
    ===================================================================== */
 const PAGES = {
-  network: { label: 'Netzwerke', icon: 'network', perm: 'view', render: renderNetworkPage },
+  network: { label: 'Netzwerke', icon: 'network', perm: () => can('networks') || (state.networks || []).length > 0, render: renderNetworkPage },
   news: { label: 'Neuigkeiten', icon: 'news', perm: 'news', render: renderNewsPage },
-  users: { label: 'Benutzer', icon: 'shield', perm: 'users', render: renderUsersPage },
+  users: { label: 'Benutzer & Rollen', icon: 'shield', perm: () => can('users') || can('roles') || can('audit'), render: renderUsersPage },
+  alerts: { label: 'Alarmierung', icon: 'bell', perm: 'alerts', render: renderAlertsPage },
 };
+const pageAllowed = (p) => typeof p.perm === 'function' ? p.perm() : can(p.perm);
 
 function renderSideNav() {
   const nav = $('#sideNav');
-  const items = Object.entries(PAGES).filter(([, p]) => can(p.perm))
+  const items = Object.entries(PAGES).filter(([, p]) => pageAllowed(p))
     .map(([id, p]) => `<button class="side-link ${state.page === id ? 'active' : ''}" data-page="${id}">${icon(p.icon)}${p.label}</button>`);
-  if (can('settings')) items.push(`<button class="side-link" data-site>${icon('globe')}Öffentliche Seite</button>`);
+  if (can('settings')) items.push(`<button class="side-link" data-site>${icon('globe')}Öffentliche Seite</button>`, `<button class="side-link" data-hosting>${icon('sliders')}Hosting</button>`);
   nav.innerHTML = items.join('');
   $$('[data-page]', nav).forEach((b) => b.addEventListener('click', () => { closeNav(); openPage(b.dataset.page); }));
   $('[data-site]', nav)?.addEventListener('click', () => { closeNav(); openSiteSettings(); });
+  $('[data-hosting]', nav)?.addEventListener('click', () => { closeNav(); openHostingSettings(); });
 }
 
 function stopPageTimer() { clearInterval(state.pageTimer); state.pageTimer = null; if (state.pageES) { state.pageES.close(); state.pageES = null; } }
@@ -1441,8 +1533,9 @@ async function renderPlayersTab(body) {
   let d;
   try { d = await api('GET', `/api/servers/${s.name}/playerdata`); } catch (e) { body.innerHTML = `<div class="banner">${icon('alert')}<div>${esc(e.message)}</div></div>`; return; }
   if (state.tab !== 'players' || state.selected !== s.name) return;
-  const edit = can('players') && d.running;
-  const act = (a, p, label, cls = '') => edit ? `<button class="btn sm ${cls}" data-pa="${a}" data-p="${esc(p)}">${label}</button>` : '';
+  const edit = (canS('players.manage') || canS('players.cheat')) && d.running;
+  const manage = canS('players.manage') && d.running, cheat = canS('players.cheat') && d.running;
+  const act = (a, p, label, cls = '') => manage ? `<button class="btn sm ${cls}" data-pa="${a}" data-p="${esc(p)}">${label}</button>` : '';
   const opsSet = new Set(d.ops.map((o) => o.name.toLowerCase())), wlSet = new Set(d.whitelist.map((n) => n.toLowerCase()));
   const cfgNote = (n, list) => list.map((x) => x.toLowerCase()).includes(n.toLowerCase()) ? '<span class="tag" title="Steht in der Konfiguration und wird beim Neustart wieder gesetzt">Konfig</span>' : '';
   const statusNote = !d.running ? `<div class="banner info">${icon('alert')}<div>Der Server läuft nicht – Listen sind lesbar, Aktionen gehen erst nach dem Start.</div></div>`
@@ -1452,17 +1545,17 @@ async function renderPlayersTab(body) {
     <div class="grid two">
       <div class="panel"><div class="panel-head"><h3>${icon('users')}Online</h3><span class="dim num">${d.online.length} / ${d.max}</span></div>
         <div class="panel-body"><div class="plist">${d.online.length ? d.online.map((n) => `<div class="prow clickable" data-pm="${esc(n)}" title="Spieler-Aktionen öffnen">${avatar(n)}<b class="grow">${esc(n)}</b>${opsSet.has(n.toLowerCase()) ? '<span class="tag new">OP</span>' : ''}
-          ${edit ? `<button class="btn sm" data-pm="${esc(n)}" data-tab="items">${icon('box')}<span class="lbl">Item</span></button><button class="btn sm" data-pm="${esc(n)}" data-tab="tp">${icon('send')}<span class="lbl">Teleport</span></button>` : ''}
+          ${cheat ? `<button class="btn sm" data-pm="${esc(n)}" data-tab="items">${icon('box')}<span class="lbl">Item</span></button><button class="btn sm" data-pm="${esc(n)}" data-tab="tp">${icon('send')}<span class="lbl">Teleport</span></button>` : ''}
           <button class="btn sm ${edit ? 'primary' : ''}" data-pm="${esc(n)}">${icon('sliders')}<span class="lbl">${edit ? 'Aktionen' : 'Details'}</span></button></div>`).join('') : '<div class="empty-note">Niemand online.</div>'}</div></div></div>
       <div class="panel"><div class="panel-head"><h3>${icon('shield')}Whitelist</h3>
-          <div class="btn-group"><span class="tag ${d.whitelistOn ? 'new' : ''}">${d.whitelistOn ? 'aktiv' : 'aus'}</span>${edit ? `<button class="btn sm" data-pa="${d.whitelistOn ? 'whitelist-off' : 'whitelist-on'}" data-p="">${d.whitelistOn ? 'Ausschalten' : 'Einschalten'}</button>` : ''}</div></div>
-        <div class="panel-body">${edit ? `<form class="addrow" data-add="whitelist-add"><input placeholder="Spielername" required pattern="[A-Za-z0-9_.\\-]{1,40}"><button class="btn sm primary">${icon('plus')}Hinzufügen</button></form>` : ''}
+          <div class="btn-group"><span class="tag ${d.whitelistOn ? 'new' : ''}">${d.whitelistOn ? 'aktiv' : 'aus'}</span>${manage ? `<button class="btn sm" data-pa="${d.whitelistOn ? 'whitelist-off' : 'whitelist-on'}" data-p="">${d.whitelistOn ? 'Ausschalten' : 'Einschalten'}</button>` : ''}</div></div>
+        <div class="panel-body">${manage ? `<form class="addrow" data-add="whitelist-add"><input placeholder="Spielername" required pattern="[A-Za-z0-9_.\\-]{1,40}"><button class="btn sm primary">${icon('plus')}Hinzufügen</button></form>` : ''}
           <div class="plist">${d.whitelist.length ? d.whitelist.map((n) => `<div class="prow">${avatar(n, 24)}<span class="grow">${esc(n)}</span>${cfgNote(n, d.configWhitelist)}${act('whitelist-remove', n, icon('x'), 'ghost icon')}</div>`).join('') : '<div class="empty-note">Leer.</div>'}</div></div></div>
       <div class="panel"><div class="panel-head"><h3>${icon('star')}Operatoren</h3></div>
-        <div class="panel-body">${edit ? `<form class="addrow" data-add="op"><input placeholder="Spielername" required pattern="[A-Za-z0-9_.\\-]{1,40}"><button class="btn sm primary">${icon('plus')}OP geben</button></form>` : ''}
+        <div class="panel-body">${manage ? `<form class="addrow" data-add="op"><input placeholder="Spielername" required pattern="[A-Za-z0-9_.\\-]{1,40}"><button class="btn sm primary">${icon('plus')}OP geben</button></form>` : ''}
           <div class="plist">${d.ops.length ? d.ops.map((o) => `<div class="prow">${avatar(o.name, 24)}<span class="grow">${esc(o.name)} <small class="dim">Level ${o.level}</small></span>${cfgNote(o.name, d.configOps)}${act('deop', o.name, icon('x'), 'ghost icon')}</div>`).join('') : '<div class="empty-note">Keine Operatoren.</div>'}</div></div></div>
       <div class="panel"><div class="panel-head"><h3>${icon('ban')}Gebannt</h3></div>
-        <div class="panel-body">${edit ? `<form class="addrow" data-add="ban"><input placeholder="Spielername" required pattern="[A-Za-z0-9_.\\-]{1,40}"><input placeholder="Grund (optional)" data-reason><button class="btn sm danger">Bannen</button></form>` : ''}
+        <div class="panel-body">${manage ? `<form class="addrow" data-add="ban"><input placeholder="Spielername" required pattern="[A-Za-z0-9_.\\-]{1,40}"><input placeholder="Grund (optional)" data-reason><button class="btn sm danger">Bannen</button></form>` : ''}
           <div class="plist">${d.banned.length ? d.banned.map((b) => `<div class="prow">${avatar(b.name, 24)}<span class="grow">${esc(b.name)}<small class="dim block">${esc(b.reason || '')}${b.source ? ' · von ' + esc(b.source) : ''}</small></span>${act('pardon', b.name, 'Entbannen')}</div>`).join('') : '<div class="empty-note">Niemand gebannt.</div>'}</div></div></div>
     </div>
     <div class="panel"><div class="panel-head"><h3>${icon('clock')}Spielzeit</h3><input class="mini-search" id="psQ" placeholder="Spieler suchen …"></div>
@@ -1506,31 +1599,32 @@ function renderWorld(body) {
           <dt>Seed</dt><dd class="mono">${esc(c.seed || 'zufällig')}</dd>
           <dt>Welttyp</dt><dd>${esc(ltOptions.find((o) => o[0] === c.levelType)?.[1] || c.levelType || 'Standard')}</dd>
           <dt>Daten</dt><dd class="mono">${esc(c.dataPath || `Volume mc-${s.name}-data`)}</dd></dl>
-          ${can('backup') ? `<div class="btn-row"><button class="btn" id="wBackup">${icon('download')}Backup herunterladen</button></div>` : ''}</div></div>
-      <div class="panel"><div class="panel-head"><h3>${icon('refresh')}Neue Welt erzeugen</h3></div>
+          ${canS('server.backup') ? `<div class="btn-row"><button class="btn" id="wBackup">${icon('download')}Backup herunterladen</button></div>` : ''}</div></div>
+      ${canS('server.world') ? `<div class="panel"><div class="panel-head"><h3>${icon('refresh')}Neue Welt erzeugen</h3></div>
         <div class="panel-body stack-sm">
           <p class="muted small">Löscht die aktuelle Welt (inkl. Nether und End) und erzeugt beim nächsten Start eine neue. Spielerdaten in der Welt gehen verloren, Plugins/Mods und Einstellungen bleiben.</p>
           <label class="field"><span>Seed</span><div class="inline"><input id="wSeed" value="${esc(c.seed)}" placeholder="leer = zufällig" spellcheck="false"><button class="btn" id="wRand" type="button" title="Zufälligen Seed setzen">🎲</button></div></label>
           <label class="field"><span>Welttyp</span><select id="wType">${ltOptions.map(([v, l]) => `<option value="${esc(v)}" ${v === c.levelType ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
           <div><button class="btn danger" id="wReset" ${s.phase === 'busy' ? 'disabled' : ''}>${icon('trash')}Welt zurücksetzen …</button></div>
-        </div></div>
+        </div></div>` : ''}
     </div>
-    <div class="panel"><div class="panel-head"><h3>${icon('upload')}Welt importieren</h3></div>
+    ${canS('server.world') ? `<div class="panel"><div class="panel-head"><h3>${icon('upload')}Welt importieren</h3></div>
       <div class="panel-body">
         <label class="drop" id="wDrop"><input type="file" id="wFile" accept=".zip,.tar,.tar.gz,.tgz" hidden>
           ${icon('upload')}<span><b>Welt-Archiv hierher ziehen</b> oder klicken</span>
           <small>.zip oder .tar.gz mit dem Weltordner (level.dat). Singleplayer-Welten, Server-Welten und Bukkit-Layouts (world, world_nether, world_the_end) werden erkannt. Max. 8 GB.</small>
           <span class="up-bar hidden" id="wBar"><i></i></span></label>
         <p class="hint-text">Die aktuelle Welt wird dabei ersetzt. Ein laufender Server wird gestoppt und danach wieder gestartet.</p>
-      </div></div>
+      </div></div>` : ''}
   </div>`;
   $('#wBackup')?.addEventListener('click', doBackup);
+  if (!canS('server.world')) return;
   $('#wRand').addEventListener('click', () => {
     const a = new BigInt64Array(1); crypto.getRandomValues(a); $('#wSeed').value = a[0].toString();
   });
   $('#wReset').addEventListener('click', async () => {
     const ok = await typedConfirm({ title: 'Welt zurücksetzen', word: s.name, ok: 'Welt löschen & neu erzeugen',
-      body: `<p>Die Welt <span class="mono">${esc(level)}</span> von <b>${esc(s.name)}</b> wird <b>unwiderruflich gelöscht</b>.${can('backup') ? ' Lade vorher am besten ein Backup herunter.' : ''}</p>` });
+      body: `<p>Die Welt <span class="mono">${esc(level)}</span> von <b>${esc(s.name)}</b> wird <b>unwiderruflich gelöscht</b>.${canS('server.backup') ? ' Lade vorher am besten ein Backup herunter.' : ''}</p>` });
     if (!ok) return;
     try {
       await api('POST', `/api/servers/${s.name}/world/reset`, { seed: $('#wSeed').value.trim(), levelType: $('#wType').value });
@@ -1593,7 +1687,7 @@ function openClone() {
     <div class="body">
       <p>Legt eine Kopie von <b>${esc(s.name)}</b> mit gleicher Konfiguration, Mods und – auf Wunsch – Welt an. Ideal, um ein Update erst an einer Testkopie auszuprobieren.</p>
       <label class="field"><span>Name der Kopie</span><input id="clName" value="${esc(s.name)}-test" spellcheck="false"></label>
-      <label class="field"><span>Host-Port</span><input id="clPort" type="number" value="${nextFreePort()}"></label>
+      <label class="field"><span>Host-Port</span><input id="clPort" type="number" value="${advFor(null) || !state.me?.hosting?.portMin ? nextFreePort() : ''}" placeholder="automatisch"></label>
       <label class="toggle-row"><span class="t"><b>Welt und Dateien kopieren</b><small>Sonst startet die Kopie mit einer neuen Welt</small></span><span class="switch"><input type="checkbox" id="clData" checked><span></span></span></label>
       <label class="toggle-row"><span class="t"><b>Nach dem Klonen starten</b></span><span class="switch"><input type="checkbox" id="clStart"><span></span></span></label>
       <p class="hint-text">Die Kopie ist nicht öffentlich und nicht im Velocity-Netzwerk. Zusätzliche Ports werden nicht übernommen.</p>
@@ -1637,25 +1731,6 @@ function openEmbed() {
   draw('dark');
 }
 
-/* ---------- account ---------- */
-function openAccount() {
-  const me = state.me;
-  const m = openOverlay(`<div class="modal" role="dialog" aria-modal="true">
-    <header><h2>Mein Konto</h2><button class="btn ghost icon sm" data-close aria-label="Schließen">${icon('x')}</button></header>
-    <div class="body">
-      <dl class="kv"><dt>Benutzer</dt><dd><b>${esc(me.user)}</b></dd><dt>Rolle</dt><dd>${esc(ROLES[me.role]?.[0] || me.role)} <span class="dim">– ${esc(ROLES[me.role]?.[1] || '')}</span></dd>
-        <dt>Server</dt><dd>${(me.servers || []).length ? me.servers.map(esc).join(', ') : 'alle'}</dd></dl>
-      ${me.builtin ? '<p class="hint-text">Das ist der eingebaute Administrator. Sein Passwort wird über die Umgebungsvariable CRAFTDOCK_PASSWORD gesetzt.</p>' : `
-      <label class="field"><span>Aktuelles Passwort</span><input type="password" id="acOld" autocomplete="current-password"></label>
-      <label class="field"><span>Neues Passwort</span><input type="password" id="acNew" autocomplete="new-password"><span class="hint">Mindestens 10 Zeichen</span></label>`}
-    </div>
-    <footer><button class="btn" data-close>Schließen</button>${me.builtin ? '' : `<button class="btn primary" id="acSave">${icon('key')}Passwort ändern</button>`}</footer></div>`);
-  $('#acSave', m.el)?.addEventListener('click', async () => {
-    try { await api('PUT', '/api/me/password', { old: $('#acOld', m.el).value, new: $('#acNew', m.el).value }); m.close(); toast('Passwort geändert'); }
-    catch (e) { toast(e.message, 'err'); }
-  });
-}
-
 /* ---------- networks page ---------- */
 async function renderNetworkPage(body) {
   let v;
@@ -1663,7 +1738,7 @@ async function renderNetworkPage(body) {
   if (state.page !== 'network') return;
   state.networks = v.networks.map((n) => n.config);
   state.proxyInfo = v;
-  const edit = can('settings');
+  const edit = can('networks');
   if (!v.available) {
     $('#pgActions').innerHTML = '';
     body.innerHTML = `<div class="empty"><div class="box"><div class="art">${icon('network')}</div><h2>Velocity-Netzwerke</h2>
@@ -1721,7 +1796,7 @@ async function renderNetworkPage(body) {
           <div class="field-label">Server</div>
           <div class="plist">${capable.length ? capable.map((x) => `<div class="prow"><span class="dot ${x.phase}"></span><span class="grow"><b>${esc(x.displayName || x.name)}</b> <small class="dim">${esc(typeOf(x.type).label)}</small></span>
             ${x.network === pc.id ? '<span class="tag new">in diesem Netzwerk</span>' : x.network ? `<span class="tag" title="Ein Server kann nur in einem Netzwerk sein">in ${esc(netName(x.network))}</span>` : '<span class="tag">nicht verbunden</span>'}
-            ${can('configure') ? `<button class="btn ghost sm" data-move="${esc(x.name)}" data-to="${x.network === pc.id ? '' : esc(pc.id)}">${x.network === pc.id ? 'Entfernen' : 'Aufnehmen'}</button>` : ''}</div>`).join('')
+            ${canS('server.advanced', state.servers.find((y) => y.name === x.name)) ? `<button class="btn ghost sm" data-move="${esc(x.name)}" data-to="${x.network === pc.id ? '' : esc(pc.id)}">${x.network === pc.id ? 'Entfernen' : 'Aufnehmen'}</button>` : ''}</div>`).join('')
             : '<div class="empty-note">Keine kompatiblen Server. Velocity-Forwarding unterstützen Paper, Purpur, Folia, Fabric und Quilt.</div>'}</div>
           ${v.servers.some((x) => !x.capable) ? `<p class="hint-text">Nicht kompatibel und daher nicht aufgeführt: ${v.servers.filter((x) => !x.capable).map((x) => esc(x.name)).join(', ')}.</p>` : ''}
           <p class="hint-text">Server im Netzwerk veröffentlichen keinen eigenen Port mehr und laufen im Offline-Modus – die Anmeldung prüft der Proxy. Aufnehmen oder Entfernen erstellt den Server-Container neu (ein laufender Server startet kurz neu).</p>
@@ -1878,60 +1953,6 @@ function openNewsEditor(n) {
   });
 }
 
-/* ---------- users page ---------- */
-async function renderUsersPage(body) {
-  let d, audit;
-  try { [d, audit] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/audit')]); } catch (e) { body.innerHTML = `<div class="banner">${icon('alert')}<div>${esc(e.message)}</div></div>`; return; }
-  if (state.page !== 'users') return;
-  $('#pgActions').innerHTML = `<button class="btn primary" id="usNew">${icon('plus')}Benutzer anlegen</button>`;
-  $('#usNew').addEventListener('click', () => openUserEditor(null));
-  body.innerHTML = `<div class="stack">
-    <div class="panel"><div class="panel-body"><table class="tbl"><thead><tr><th>Benutzer</th><th>Rolle</th><th>Server</th><th>Angelegt</th><th></th></tr></thead><tbody>
-      ${d.users.map((u) => `<tr><td><span class="uav">${icon('user')}</span><b>${esc(u.username)}</b>${u.builtin ? ' <span class="tag">eingebaut</span>' : ''}${u.username === state.me.user ? ' <span class="tag new">du</span>' : ''}</td>
-        <td>${esc(ROLES[u.role]?.[0] || u.role)}</td><td>${(u.servers || []).length ? u.servers.map(esc).join(', ') : '<span class="dim">alle</span>'}</td>
-        <td class="dim">${u.builtin ? 'Umgebungsvariable' : esc(fmtDate(u.created))}</td>
-        <td class="right">${u.builtin ? '' : `<button class="btn ghost sm" data-ue="${esc(u.username)}">Bearbeiten</button>${u.username === state.me.user ? '' : `<button class="btn ghost icon sm" data-ud="${esc(u.username)}" title="Löschen">${icon('trash')}</button>`}`}</td></tr>`).join('')}
-    </tbody></table></div></div>
-    <div class="grid roles">${Object.entries(ROLES).map(([id, [l, d2]]) => `<div class="panel role-card"><div class="panel-body"><b>${l}</b><p class="dim small">${d2}</p></div></div>`).join('')}</div>
-    <div class="panel"><div class="panel-head"><h3>${icon('clock')}Protokoll</h3><span class="dim small">letzte ${audit.length} Aktionen</span></div>
-      <div class="panel-body audit">${audit.length ? `<table class="tbl compact"><thead><tr><th>Zeit</th><th>Benutzer</th><th>Aktion</th><th>Ziel</th><th>Status</th><th>IP</th></tr></thead><tbody>
-        ${audit.map((a) => `<tr class="${a.status >= 400 ? 'bad' : ''}"><td class="dim nowrap">${fmtTime(a.time)}</td><td>${esc(a.user)}</td><td class="mono">${esc(a.action)}</td><td>${esc(a.target || '')}</td><td class="num">${a.status}</td><td class="dim mono">${esc(a.ip || '')}</td></tr>`).join('')}</tbody></table>`
-        : '<div class="empty-note">Noch keine Einträge.</div>'}</div></div>
-  </div>`;
-  $$('[data-ue]', body).forEach((b) => b.addEventListener('click', () => openUserEditor(d.users.find((u) => u.username === b.dataset.ue))));
-  $$('[data-ud]', body).forEach((b) => b.addEventListener('click', async () => {
-    if (!(await confirmDialog({ title: 'Benutzer löschen', body: `<p><b>${esc(b.dataset.ud)}</b> wird gelöscht und sofort abgemeldet.</p>`, ok: 'Löschen', danger: true }))) return;
-    try { await api('DELETE', `/api/users/${encodeURIComponent(b.dataset.ud)}`); renderUsersPage(body); } catch (e) { toast(e.message, 'err'); }
-  }));
-}
-
-function openUserEditor(u) {
-  const isNew = !u;
-  u = u || { username: '', role: 'moderator', servers: [] };
-  const sel = new Set(u.servers || []);
-  const m = openOverlay(`<div class="modal wide" role="dialog" aria-modal="true">
-    <header><h2>${isNew ? 'Benutzer anlegen' : `${esc(u.username)} bearbeiten`}</h2><button class="btn ghost icon sm" data-close aria-label="Schließen">${icon('x')}</button></header>
-    <div class="body">
-      ${isNew ? `<label class="field"><span>Benutzername</span><input id="ueName" autocomplete="off" spellcheck="false" placeholder="z. B. lena"></label>` : ''}
-      <div class="field"><span class="field-label">Rolle</span><div class="role-pick">${Object.entries(ROLES).map(([id, [l, d]]) => `<label class="role-opt"><input type="radio" name="ueRole" value="${id}" ${id === u.role ? 'checked' : ''}><span><b>${l}</b><small>${d}</small></span></label>`).join('')}</div></div>
-      <div class="field"><span class="field-label">Zugriff auf Server</span>
-        <div class="srv-pick"><label class="chk"><input type="checkbox" id="ueAll" ${sel.size ? '' : 'checked'}> Alle Server (auch künftige)</label>
-        <div id="ueList" class="${sel.size ? '' : 'hidden'}">${state.servers.map((x) => `<label class="chk"><input type="checkbox" value="${esc(x.name)}" ${sel.has(x.name) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('')}</div></div></div>
-      <label class="field"><span>${isNew ? 'Passwort' : 'Neues Passwort (optional)'}</span><input type="password" id="uePw" autocomplete="new-password"><span class="hint">Mindestens 10 Zeichen</span></label>
-    </div>
-    <footer><button class="btn" data-close>Abbrechen</button><button class="btn primary" id="ueSave">${icon('save')}Speichern</button></footer></div>`);
-  $('#ueAll', m.el).addEventListener('change', (e) => $('#ueList', m.el).classList.toggle('hidden', e.target.checked));
-  $('#ueSave', m.el).addEventListener('click', async () => {
-    const payload = { role: $('input[name=ueRole]:checked', m.el).value, password: $('#uePw', m.el).value,
-      servers: $('#ueAll', m.el).checked ? [] : $$('#ueList input:checked', m.el).map((i) => i.value) };
-    try {
-      if (isNew) await api('POST', '/api/users', { ...payload, username: $('#ueName', m.el).value });
-      else await api('PUT', `/api/users/${encodeURIComponent(u.username)}`, payload);
-      m.close(); toast('Gespeichert'); renderUsersPage($('#pgBody'));
-    } catch (e) { toast(e.message, 'err'); }
-  });
-}
-
 /* ---------- player action modal ---------- */
 const ITEMS = [
   ['Werkzeuge & Waffen', [['netherite_sword', 'Netheritschwert'], ['diamond_sword', 'Diamantschwert'], ['iron_sword', 'Eisenschwert'], ['netherite_pickaxe', 'Netheritspitzhacke'], ['diamond_pickaxe', 'Diamantspitzhacke'], ['iron_pickaxe', 'Eisenspitzhacke'],
@@ -1998,10 +2019,11 @@ const GM = [['survival', 'Überleben'], ['creative', 'Kreativ'], ['adventure', '
 const itemName = (id) => { for (const [, list] of ITEMS) for (const [i, n] of list) if (i === id || `minecraft:${i}` === id) return n; return id; };
 
 function openPlayerModal(s, player, { online = [], ops = new Set(), running = true, tab = 'items', onChange } = {}) {
-  const edit = can('players') && running;
+  const edit = (canS('players.manage', s) || canS('players.cheat', s)) && running;
   const others = online.filter((n) => n !== player);
-  const tabs = [['items', 'Items', 'box'], ['tp', 'Teleport', 'send'], ['state', 'Zustand', 'star'], ['msg', 'Nachricht', 'news'], ['mod', 'Moderation', 'shield']];
-  if (!tabs.some((t) => t[0] === tab)) tab = 'items';
+  const tabs = [['items', 'Items', 'box'], ['tp', 'Teleport', 'send'], ['state', 'Zustand', 'star'], ['msg', 'Nachricht', 'news'], ['mod', 'Moderation', 'shield']]
+    .filter(([id]) => ['items', 'tp', 'state'].includes(id) ? canS('players.cheat', s) : canS('players.manage', s));
+  if (!tabs.some((t) => t[0] === tab)) tab = tabs[0]?.[0] || 'items';
   const isOp = ops.has(player.toLowerCase());
   const m = openOverlay(`<div class="modal pm" role="dialog" aria-modal="true" aria-label="Aktionen für ${esc(player)}">
     <header class="pm-head"><img class="pm-av" src="https://mc-heads.net/head/${encodeURIComponent(player)}/96" alt="">

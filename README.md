@@ -2,7 +2,7 @@
 
 [![Docker image](https://github.com/b1tk1ll3r/craftdock/actions/workflows/docker.yml/badge.svg)](https://github.com/b1tk1ll3r/craftdock/actions/workflows/docker.yml)
 
-Web-Launcher und Konfigurator für Minecraft-Server, die in Docker laufen – mit öffentlicher Server-Übersicht und Live-Dashboard pro Server. Ein einzelnes Go-Binary (nur Standardbibliothek) mit eingebetteter Weboberfläche, das über die Docker-Engine-API Container auf Basis von [`itzg/minecraft-server`](https://github.com/itzg/docker-minecraft-server) verwaltet.
+Web-Launcher, Konfigurator und Hosting-Panel für Minecraft-Server, die in Docker laufen – für die eigene Community genauso wie für Hosting für Dritte: Kunden mit eigenen Servern und Quoten, frei definierbare Rollen, Zwei-Faktor-Anmeldung, Alarmierung, öffentliche Server-Übersicht und Live-Dashboard pro Server. Ein einzelnes Go-Binary (nur Standardbibliothek) mit eingebetteter Weboberfläche, das über die Docker-Engine-API Container auf Basis von [`itzg/minecraft-server`](https://github.com/itzg/docker-minecraft-server) verwaltet.
 
 | Adresse | Inhalt |
 |---|---|
@@ -12,6 +12,8 @@ Web-Launcher und Konfigurator für Minecraft-Server, die in Docker laufen – mi
 | `/map/<name>/` | BlueMap-Live-Karte eines Servers |
 | `/widget`, `/widget/<name>` | Einbettbares Status-Widget (`?theme=light`, `?bg=transparent`) |
 | `/badge/<name>.svg` | Status-Badge |
+| `/healthz` | Health-Check für Load-Balancer und Uptime-Monitore |
+| `/metrics` | Prometheus-Metriken (mit `CRAFTDOCK_METRICS_TOKEN`) |
 
 ## Funktionen
 
@@ -43,15 +45,50 @@ Web-Launcher und Konfigurator für Minecraft-Server, die in Docker laufen – mi
 - **Neuigkeiten & Events:** Beiträge und Events (mit Countdown) für die Startseite und die Server-Dashboards.
 - **Einbettbares Widget und Badge:** `/widget/<name>` bzw. `/widget` als iframe (hell/dunkel), `/badge/<name>.svg` für READMEs und Foren, CORS-fähige JSON-API.
 
-### Benutzer & Rollen
-| Rolle | Darf |
-|---|---|
-| Administrator | alles, inkl. Benutzer, Netzwerk und öffentliche Seite |
-| Operator | Server anlegen/klonen, konfigurieren, Mods, Welt, Dateien, Backups, Spieler, Konsole, Neuigkeiten – nicht löschen |
-| Moderator | Starten/Stoppen, Konsole, Spielerverwaltung, Neuigkeiten |
-| Beobachter | nur ansehen (Status, Logs, Spieler) |
+### Benutzer, Rollen & Mandanten
+Jeder Benutzer hat eine **Rolle** – einen frei zusammenstellbaren Satz aus 20 Berechtigungen. Server-Berechtigungen (Sehen, Steuern, Konsole, Konfigurieren, Erweitert, Mods, Dateien, Welt, Backups, Löschen, Spieler verwalten, Spieler-Eingriffe) gelten
 
-Benutzer lassen sich auf einzelne Server beschränken. Passwörter werden mit PBKDF2-SHA256 (600 000 Runden) gespeichert, Rollen- oder Passwortänderungen melden den Benutzer sofort ab, und jede ändernde Aktion landet im Protokoll. Der Account aus `CRAFTDOCK_USER`/`CRAFTDOCK_PASSWORD` ist immer Administrator.
+- für **alle Server** (Team-Mitglieder, Schalter „Rolle gilt für alle Server“),
+- für **eigene Server** – jeder Server kann einem Benutzer gehören; Kunden sehen nur ihre eigenen Server,
+- oder **pro Server** mit einer eigenen Rolle (z. B. „tom ist Moderator auf lena-survival“).
+
+Panel-Berechtigungen (Server anlegen, Netzwerke, Neuigkeiten, Einstellungen, Alarmierung, Benutzer, Rollen, Audit-Log) gelten für die Verwaltung insgesamt.
+
+| Eingebaute Rolle | Gedacht für |
+|---|---|
+| Administrator | alles (nicht veränderbar, mindestens einer bleibt immer erhalten) |
+| Operator | betreibt alle Server, legt neue an, schreibt Neuigkeiten – löscht nicht |
+| Moderator | Starten/Stoppen, Konsole (ohne `op`, `deop`, `stop`, `reload`), Spieler |
+| Kunde | verwaltet eigene Server im Rahmen seiner Quote, ohne Host-Einstellungen |
+| Betrachter | nur ansehen |
+
+Eingebaute Rollen (außer Administrator) lassen sich anpassen, eigene kommen dazu. Pro Rolle: **Konsolen-Allow-/Denylist** (erstes Wort des Befehls) und **2FA-Pflicht**. Niemand kann eine Rolle oder einen Benutzer mit mehr Rechten anlegen, als er selbst hat.
+
+- **Quoten pro Benutzer:** Anzahl Server, Summe Java-Speicher, Summe CPU-Kerne. Gilt für Server, die dem Benutzer gehören.
+- **Einladungen:** Link mit Rolle, Quote und Ablaufdatum (ein- oder mehrfach verwendbar) – der Kunde legt sein Konto selbst an. Optional offene Registrierung mit Standardrolle und -quote.
+- **Konten sperren:** keine Anmeldung mehr, Sitzungen enden sofort, Server laufen weiter.
+- **Audit-Log** mit Filter nach Benutzer.
+
+### Hosting-Regeln
+Benutzer ohne „Erweiterte Einstellungen“ (z. B. Kunden) …
+- bekommen automatisch einen freien **Host-Port aus einem festen Bereich** und können nur Ports daraus wählen,
+- können keinen Datenpfad auf dem Host, kein Velocity-Netzwerk und keine Speicher-, JVM- oder RCON-Variablen setzen,
+- bekommen ein **Container-RAM-Limit passend zum Heap** (Heap + Aufschlag) und optional eine Obergrenze pro Server,
+- erscheinen nur auf der öffentlichen Seite, wenn du das erlaubst.
+
+Einstellbar unter Verwaltung → „Hosting“, zusammen mit Registrierung, Standardquote, Panel-Adresse und 2FA-Pflicht für alle.
+
+### Sicherheit der Anmeldung
+- **Zwei-Faktor-Anmeldung (TOTP)** mit QR-Code für jede Authenticator-App, 10 Wiederherstellungscodes, Schutz gegen Wiederverwendung eines Codes. Pflicht pro Rolle oder für alle einstellbar – wer betroffen ist, muss 2FA einrichten, bevor er weiterarbeiten kann.
+- **Login-Sperre:** 5 Fehlversuche pro Benutzer und IP → 15 Minuten, 20 pro IP → 30 Minuten.
+- **Sitzungen** überstehen Neustarts (gespeichert als Hash), sind unter „Konto“ einsehbar und einzeln oder gesammelt abmeldbar; Admins können alle Sitzungen eines Benutzers beenden. Passwort- und Rollenwechsel melden andere Sitzungen ab.
+- Passwörter mit PBKDF2-SHA256 (600 000 Runden).
+
+### Alarmierung
+- **Kanäle:** Discord, Slack/Mattermost, Webhook (JSON, optional Bearer-Token), ntfy, Gotify, Telegram, E-Mail (SMTP mit STARTTLS/TLS). Test-Knopf pro Kanal.
+- **Regeln:** Server ausgefallen (Absturz oder antwortet nicht), Absturzschleife, Healthcheck „unhealthy“, niedrige TPS, hohe RAM-Auslastung, wenig Speicherplatz, Velocity-Netzwerk ausgefallen, fehlgeschlagener Vorgang, Angriff auf die Anmeldung, Admin-Anmeldung von neuer IP. Mit Schwellwert, Mindestdauer, Pause zwischen Meldungen, Serverauswahl und **Entwarnung**, sobald das Problem behoben ist. „Empfohlene Regeln“ legt sinnvolle Standards an.
+- **Wartungsmodus** pro Server (Menü „⋮“) oder global – Alarme bleiben dann stumm. Absichtliche Stopps und Neustarts lösen nie einen Alarm aus.
+- **Verlauf** mit Zustellstatus je Kanal.
 
 ### Öffentliche Seite & Dashboards
 - Startseite mit Kennzahlen (Server online, Spieler, Mods) und animierten Server-Karten: Favicon, farbige MOTD, Spielerbalken, Adresse zum Kopieren
@@ -76,9 +113,13 @@ Die Compose-Datei nutzt das fertige Image `ghcr.io/b1tk1ll3r/craftdock` (amd64 u
 | Variable / Flag | Standard | Bedeutung |
 |---|---|---|
 | `CRAFTDOCK_ADDR` / `-addr` | `:8080` | Listen-Adresse |
-| `CRAFTDOCK_USER` | `admin` | Benutzername |
-| `CRAFTDOCK_PASSWORD` | – | Passwort. Fehlt es, steht ein temporäres Passwort im Log |
-| `CRAFTDOCK_DATA` | `data` (`/data` im Image) | Ablage für Benutzer, Protokoll, Einstellungen, Neuigkeiten, Statistik |
+| `CRAFTDOCK_USER` | `admin` | Erster Administrator – wird beim ersten Start angelegt |
+| `CRAFTDOCK_PASSWORD` | – | Dessen Startpasswort. Fehlt es, steht ein temporäres Passwort im Log. Danach wird das Passwort in der Oberfläche verwaltet |
+| `CRAFTDOCK_RESET_ADMIN` | – | `1` setzt Passwort (aus `CRAFTDOCK_PASSWORD`), 2FA und Sperre des Administrators zurück – z. B. nach Verlust des Handys. Danach wieder entfernen |
+| `CRAFTDOCK_DATA` | `data` (`/data` im Image) | Ablage für Benutzer, Rollen, Sitzungen, Protokoll, Einstellungen, Server-Konfigurationen, Alarme, Statistik |
+| `CRAFTDOCK_TRUSTED_PROXIES` | – | Reverse-Proxys, deren `X-Forwarded-For`/`-Proto` gelten: IPs, CIDRs, `private` oder `loopback`, z. B. `172.16.0.0/12`. Ohne Eintrag werden die Header ignoriert |
+| `CRAFTDOCK_METRICS_TOKEN` | – | Aktiviert `/metrics`; Abruf mit `Authorization: Bearer <token>` |
+| `CRAFTDOCK_LOG_MAX_SIZE` / `CRAFTDOCK_LOG_MAX_FILE` | `20m` / `5` | Log-Rotation der Minecraft- und Proxy-Container (`off` = Docker-Standard) |
 | `DOCKER_HOST` / `-docker` | `unix:///var/run/docker.sock` | Docker-Endpunkt |
 | `CRAFTDOCK_NETWORK` / `-network` | – | Docker-Netzwerk für neue Server (in der Compose-Datei: `minecraft`). Pflicht für Velocity-Netzwerke |
 | `CRAFTDOCK_PING_HOST` | `host.docker.internal` | Host für den Status-Ping über den veröffentlichten Port, falls die Container-IP nicht erreichbar ist |
@@ -91,7 +132,8 @@ CraftDock pingt jeden Server zuerst über dessen Container-IP, danach über `CRA
 
 ## Wie CraftDock Server verwaltet
 
-- Jeder Server ist ein Container `mc-<name>` mit den Labels `craftdock.managed`, `craftdock.name` und `craftdock.config` (komplette Konfiguration als JSON); der Proxy entsprechend `mc-velocity`. Server-Zustand steckt vollständig in Docker; im Datenverzeichnis liegen Benutzer, Protokoll, Seiteneinstellungen, Neuigkeiten, Spielerverlauf (24 h minütlich) und Tagesstatistiken (90 Tage).
+- Jeder Server ist ein Container `mc-<name>` mit den Labels `craftdock.managed`, `craftdock.name` und `craftdock.config` (komplette Konfiguration als JSON); der Proxy entsprechend `mc-velocity`. Zusätzlich spiegelt CraftDock jede Konfiguration nach `servers.json` im Datenverzeichnis: Wird ein Container außerhalb von CraftDock gelöscht, erscheint der Server als „Container fehlt“ und lässt sich mit einem Klick **wiederherstellen** (die Welt im Volume bleibt ohnehin erhalten).
+- Container-Logs werden rotiert (20 MB × 5), damit Minecraft-Logs nicht die Platte füllen.
 - Dateien, die ein Server vor dem Start braucht (BlueMap-`core.conf`, Velocity-Forwarding in `paper-global.yml`, `FabricProxy-Lite.toml`), schreibt CraftDock vor jedem Start; bei gestopptem Server über einen kurzlebigen Hilfscontainer.
 - Weltdaten liegen im Volume `mc-<name>-data` oder in einem beim Anlegen angegebenen Host-Verzeichnis.
 - Konsole, Spielerliste, TPS und Backup-Vorbereitung laufen über `rcon-cli` im Container – RCON muss nicht nach außen freigegeben werden.
@@ -99,7 +141,9 @@ CraftDock pingt jeden Server zuerst über dessen Container-IP, danach über `CRA
 
 ## Sicherheit & Datenschutz
 
-- Zugriff auf den Docker-Socket heißt faktisch Root auf dem Host: starkes Passwort, `/admin/` nicht ungeschützt ins Internet stellen, idealerweise HTTPS über einen Reverse-Proxy (`X-Forwarded-Proto` wird für das `Secure`-Cookie ausgewertet).
+- Zugriff auf den Docker-Socket heißt faktisch Root auf dem Host: starkes Passwort, 2FA für Administratoren (Rolle → „2FA vorschreiben“), HTTPS über einen Reverse-Proxy. Dessen Adresse gehört in `CRAFTDOCK_TRUSTED_PROXIES` – nur dann werden `X-Forwarded-For` (Login-Sperre, Audit-Log) und `X-Forwarded-Proto` (`Secure`-Cookie, HSTS) ausgewertet.
+- Kunden sehen keine Host-Details (Docker-Version, RAM des Hosts), keine fremden Server und keine Netzwerke, in denen sie keinen Server haben. Plugins und Mods laufen innerhalb des Containers des Kunden; die Grenze bilden Container, RAM-/CPU-Limits und die Hosting-Regeln.
+- Sensible Dateien im Datenverzeichnis (`users.json`, `sessions.json`, `servers.json`, `alerts.json`, …) werden mit Rechten `0600` geschrieben. Geheimnisse von Alarm-Kanälen werden in der Oberfläche maskiert.
 - Die öffentliche API (`/api/public/…`) gibt nur Anzeigedaten heraus – keine Umgebungsvariablen, Pfade, RCON-Passwörter, API-Keys, Operatoren oder Zusatzports. Abfragen werden gecacht, damit Besucher den Docker-Daemon nicht belasten.
 - Die öffentlichen Seiten laden Spieler-Avatare von `mc-heads.net` und Mod-Icons von `cdn.modrinth.com`. Spielernamen (auch in der Bestenliste) lassen sich in den Einstellungen ausblenden.
 - Die Live-Karte wird über CraftDock ausgeliefert; Cookies und Login-Daten werden dabei nie an BlueMap weitergereicht. Für nicht öffentliche Server ist sie nur angemeldeten Benutzern zugänglich.

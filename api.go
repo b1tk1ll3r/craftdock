@@ -21,6 +21,7 @@ import (
 type API struct {
 	m      *Manager
 	auth   *Auth
+	alerts *Alerter
 	admin  fs.FS
 	public fs.FS
 }
@@ -28,15 +29,26 @@ type API struct {
 func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 	p := a.protect
+	me := func(h http.HandlerFunc) http.HandlerFunc { return a.guard("", true, h) }
 
 	mux.HandleFunc("POST /api/login", a.login)
+	mux.HandleFunc("POST /api/login/2fa", a.login2FA)
 	mux.HandleFunc("POST /api/logout", a.logout)
 	mux.HandleFunc("GET /api/session", a.session)
-	mux.HandleFunc("PUT /api/me/password", p("", a.changeOwnPassword))
+	mux.HandleFunc("GET /api/register", a.registerInfo)
+	mux.HandleFunc("POST /api/register", a.register)
+	mux.HandleFunc("PUT /api/me/password", me(a.changeOwnPassword))
+	mux.HandleFunc("GET /api/me/sessions", me(a.mySessions))
+	mux.HandleFunc("DELETE /api/me/sessions/{id}", me(a.revokeMySession))
+	mux.HandleFunc("POST /api/me/sessions/revoke-others", me(a.revokeMyOthers))
+	mux.HandleFunc("POST /api/me/2fa/setup", me(a.setup2FA))
+	mux.HandleFunc("POST /api/me/2fa/confirm", me(a.confirm2FA))
+	mux.HandleFunc("POST /api/me/2fa/disable", me(a.disable2FA))
+	mux.HandleFunc("POST /api/me/2fa/recovery", me(a.recovery2FA))
 
-	mux.HandleFunc("GET /api/info", p(PermView, a.info))
-	mux.HandleFunc("GET /api/versions", p(PermView, a.versions))
-	mux.HandleFunc("GET /api/servers", p(PermView, a.listServers))
+	mux.HandleFunc("GET /api/info", p("", a.info))
+	mux.HandleFunc("GET /api/versions", p("", a.versions))
+	mux.HandleFunc("GET /api/servers", p("", a.listServers))
 	mux.HandleFunc("POST /api/servers", p(PermCreate, a.createServer))
 	mux.HandleFunc("GET /api/servers/{name}", p(PermView, a.getServer))
 	mux.HandleFunc("PUT /api/servers/{name}", p(PermConfigure, a.updateServer))
@@ -46,44 +58,65 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("POST /api/servers/{name}/command", p(PermConsole, a.command))
 	mux.HandleFunc("GET /api/servers/{name}/players", p(PermView, a.players))
 	mux.HandleFunc("GET /api/servers/{name}/playerdata", p(PermView, a.playerData))
-	mux.HandleFunc("POST /api/servers/{name}/playeraction", p(PermPlayers, a.playerAction))
+	mux.HandleFunc("POST /api/servers/{name}/playeraction", p(PermView, a.playerAction)) // checked per action
 	mux.HandleFunc("GET /api/servers/{name}/playerinfo", p(PermView, a.playerInfo))
 	mux.HandleFunc("GET /api/servers/{name}/stats", p(PermView, a.stats))
 	mux.HandleFunc("GET /api/servers/{name}/logs", p(PermView, a.logs))
-	mux.HandleFunc("GET /api/servers/{name}/files", p(PermConfigure, a.listFiles))
-	mux.HandleFunc("GET /api/servers/{name}/file", p(PermConfigure, a.readFile))
-	mux.HandleFunc("PUT /api/servers/{name}/file", p(PermConfigure, a.writeFile))
+	mux.HandleFunc("GET /api/servers/{name}/files", p(PermFiles, a.listFiles))
+	mux.HandleFunc("GET /api/servers/{name}/file", p(PermFiles, a.readFile))
+	mux.HandleFunc("PUT /api/servers/{name}/file", p(PermFiles, a.writeFile))
 	mux.HandleFunc("GET /api/servers/{name}/backup", p(PermBackup, a.backup))
 	mux.HandleFunc("GET /api/servers/{name}/mods", p(PermView, a.mods))
-	mux.HandleFunc("GET /api/servers/{name}/mods/search", p(PermConfigure, a.modSearch))
+	mux.HandleFunc("GET /api/servers/{name}/mods/search", p(PermMods, a.modSearch))
 	mux.HandleFunc("GET /api/servers/{name}/mods/compat", p(PermView, a.modCompat))
-	mux.HandleFunc("PUT /api/servers/{name}/mods/projects", p(PermConfigure, a.setProjects))
-	mux.HandleFunc("POST /api/servers/{name}/mods/files", p(PermConfigure, a.uploadMod))
-	mux.HandleFunc("DELETE /api/servers/{name}/mods/files", p(PermConfigure, a.deleteMod))
+	mux.HandleFunc("PUT /api/servers/{name}/mods/projects", p(PermMods, a.setProjects))
+	mux.HandleFunc("POST /api/servers/{name}/mods/files", p(PermMods, a.uploadMod))
+	mux.HandleFunc("DELETE /api/servers/{name}/mods/files", p(PermMods, a.deleteMod))
 	mux.HandleFunc("POST /api/servers/{name}/clone", p(PermCreate, a.cloneServer))
-	mux.HandleFunc("POST /api/servers/{name}/world/reset", p(PermConfigure, a.worldReset))
-	mux.HandleFunc("POST /api/servers/{name}/world/import", p(PermConfigure, a.worldImport))
+	mux.HandleFunc("POST /api/servers/{name}/world/reset", p(PermWorld, a.worldReset))
+	mux.HandleFunc("POST /api/servers/{name}/world/import", p(PermWorld, a.worldImport))
+	mux.HandleFunc("PUT /api/servers/{name}/maintenance", p(PermControl, a.setMaintenance))
 
 	mux.HandleFunc("GET /api/settings", p(PermSettings, a.getSettings))
 	mux.HandleFunc("PUT /api/settings", p(PermSettings, a.putSettings))
-	mux.HandleFunc("GET /api/proxies", p(PermView, a.getProxies))
-	mux.HandleFunc("POST /api/proxies", p(PermSettings, a.createProxy))
-	mux.HandleFunc("PUT /api/proxies/{id}", p(PermSettings, a.putProxy))
-	mux.HandleFunc("POST /api/proxies/{id}/actions/{action}", p(PermSettings, a.proxyAction))
-	mux.HandleFunc("GET /api/proxies/{id}/logs", p(PermSettings, a.proxyLogs))
+	mux.HandleFunc("GET /api/hosting", p(PermSettings, a.getHosting))
+	mux.HandleFunc("PUT /api/hosting", p(PermSettings, a.putHosting))
+	mux.HandleFunc("GET /api/proxies", p("", a.getProxies))
+	mux.HandleFunc("POST /api/proxies", p(PermNetworks, a.createProxy))
+	mux.HandleFunc("PUT /api/proxies/{id}", p(PermNetworks, a.putProxy))
+	mux.HandleFunc("POST /api/proxies/{id}/actions/{action}", p(PermNetworks, a.proxyAction))
+	mux.HandleFunc("GET /api/proxies/{id}/logs", p(PermNetworks, a.proxyLogs))
 	mux.HandleFunc("GET /api/news", p(PermNews, a.listNews))
 	mux.HandleFunc("POST /api/news", p(PermNews, a.createNews))
 	mux.HandleFunc("PUT /api/news/{id}", p(PermNews, a.updateNews))
 	mux.HandleFunc("DELETE /api/news/{id}", p(PermNews, a.deleteNews))
+
 	mux.HandleFunc("GET /api/users", p(PermUsers, a.listUsers))
 	mux.HandleFunc("POST /api/users", p(PermUsers, a.createUser))
 	mux.HandleFunc("PUT /api/users/{username}", p(PermUsers, a.updateUser))
 	mux.HandleFunc("DELETE /api/users/{username}", p(PermUsers, a.deleteUser))
-	mux.HandleFunc("GET /api/audit", p(PermUsers, a.auditLog))
+	mux.HandleFunc("POST /api/users/{username}/reset-2fa", p(PermUsers, a.resetUser2FA))
+	mux.HandleFunc("DELETE /api/users/{username}/sessions", p(PermUsers, a.revokeUserSessions))
+	mux.HandleFunc("GET /api/invites", p(PermUsers, a.listInvites))
+	mux.HandleFunc("POST /api/invites", p(PermUsers, a.createInvite))
+	mux.HandleFunc("DELETE /api/invites/{id}", p(PermUsers, a.deleteInvite))
+	mux.HandleFunc("GET /api/roles", p("", a.listRoles))
+	mux.HandleFunc("POST /api/roles", p(PermRoles, a.createRole))
+	mux.HandleFunc("PUT /api/roles/{id}", p(PermRoles, a.updateRole))
+	mux.HandleFunc("DELETE /api/roles/{id}", p(PermRoles, a.deleteRole))
+	mux.HandleFunc("GET /api/audit", p(PermAudit, a.auditLog))
+
+	mux.HandleFunc("GET /api/alerts", p(PermAlerts, a.getAlerts))
+	mux.HandleFunc("PUT /api/alerts", p(PermAlerts, a.putAlerts))
+	mux.HandleFunc("POST /api/alerts/test", p(PermAlerts, a.testAlert))
+	mux.HandleFunc("PUT /api/alerts/maintenance", p(PermAlerts, a.putGlobalMaintenance))
 
 	mux.HandleFunc("GET /api/public/site", cors(a.publicSite))
 	mux.HandleFunc("GET /api/public/servers/{name}", cors(a.publicServer))
 	mux.Handle("/api/", http.NotFoundHandler())
+
+	mux.HandleFunc("GET /healthz", a.healthz)
+	mux.HandleFunc("GET /metrics", a.metrics)
 
 	// Admin UI under /admin/, public pages at / and /s/<name>.
 	mux.Handle("GET /admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(a.admin))))
@@ -122,6 +155,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
+		if isHTTPS(r) {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/map/"):
 			// BlueMap's own web app: framed by our dashboards only.
@@ -147,10 +183,25 @@ func cors(h http.HandlerFunc) http.HandlerFunc {
 }
 
 type ctxKey struct{}
+type roleKey struct{}
+type sessKey struct{}
 
 func userFrom(r *http.Request) *User {
 	u, _ := r.Context().Value(ctxKey{}).(*User)
 	return u
+}
+
+// roleFrom is the role the user acts with on the server of the request.
+func roleFrom(r *http.Request) *Role {
+	if ro, ok := r.Context().Value(roleKey{}).(*Role); ok {
+		return ro
+	}
+	return &Role{ID: "none"}
+}
+
+func sessionHashFrom(r *http.Request) string {
+	s, _ := r.Context().Value(sessKey{}).(string)
+	return s
 }
 
 type statusWriter struct {
@@ -160,13 +211,25 @@ type statusWriter struct {
 
 func (s *statusWriter) WriteHeader(c int) { s.status = c; s.ResponseWriter.WriteHeader(c) }
 
-// protect enforces a valid session, the permission perm ("" = any user), the
-// user's server scope and, for state-changing requests, a custom header that
-// cross-site forms cannot send (CSRF protection on top of SameSite).
-// State-changing requests are written to the audit log.
+// Flush keeps log streams working through the wrapper.
+func (s *statusWriter) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (a *API) protect(perm string, h http.HandlerFunc) http.HandlerFunc {
+	return a.guard(perm, false, h)
+}
+
+// guard enforces a valid session, a completed 2FA setup where required, the
+// permission perm ("" = any user) – for server routes in the role the user
+// holds on that server – and, for state-changing requests, a custom header
+// that cross-site forms cannot send (CSRF protection on top of SameSite).
+// State-changing requests are written to the audit log.
+func (a *API) guard(perm string, allowSetup bool, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u := a.auth.User(r)
+		u, sess := a.auth.userSession(r)
 		if u == nil {
 			writeErr(w, &APIError{http.StatusUnauthorized, "Nicht angemeldet"})
 			return
@@ -176,15 +239,36 @@ func (a *API) protect(perm string, h http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, &APIError{http.StatusForbidden, "Fehlender CSRF-Header"})
 			return
 		}
-		if name := r.PathValue("name"); name != "" && (!nameRe.MatchString(name) || !u.CanServer(name)) {
-			writeErr(w, ErrServerNotFound)
+		if !allowSetup && a.auth.Needs2FASetup(u) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Bitte richte zuerst die Zwei-Faktor-Anmeldung ein", "code": "2fa_setup"})
 			return
 		}
-		if perm != "" && !u.Can(perm) {
+		ctx := context.WithValue(r.Context(), ctxKey{}, u)
+		ctx = context.WithValue(ctx, sessKey{}, sess.Hash)
+		if name := r.PathValue("name"); name != "" {
+			if !nameRe.MatchString(name) {
+				writeErr(w, ErrServerNotFound)
+				return
+			}
+			role := a.auth.ServerRole(u, name)
+			if role == nil {
+				writeErr(w, ErrServerNotFound)
+				return
+			}
+			if perm != "" && serverPerm[perm] && !role.Has(perm) {
+				writeErr(w, &APIError{http.StatusForbidden, "Dafür fehlt dir die Berechtigung"})
+				return
+			}
+			ctx = context.WithValue(ctx, roleKey{}, role)
+		} else if perm != "" && serverPerm[perm] {
 			writeErr(w, &APIError{http.StatusForbidden, "Dafür fehlt dir die Berechtigung"})
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, u))
+		if perm != "" && !serverPerm[perm] && !a.auth.Can(u, perm) {
+			writeErr(w, &APIError{http.StatusForbidden, "Dafür fehlt dir die Berechtigung"})
+			return
+		}
+		r = r.WithContext(ctx)
 		if !mutating {
 			h(w, r)
 			return
@@ -197,17 +281,6 @@ func (a *API) protect(perm string, h http.HandlerFunc) http.HandlerFunc {
 		}
 		a.auth.Audit(AuditEntry{Time: time.Now().Unix(), User: u.Username, Action: r.Method + " " + r.URL.Path, Target: target, Status: sw.status, IP: clientIP(r)})
 	}
-}
-
-func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		return strings.TrimSpace(strings.Split(f, ",")[0])
-	}
-	host, _, _ := strings.Cut(r.RemoteAddr, ":")
-	if strings.HasPrefix(r.RemoteAddr, "[") {
-		host = r.RemoteAddr
-	}
-	return host
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -247,10 +320,26 @@ func ctxT(r *http.Request, d time.Duration) (context.Context, context.CancelFunc
 	return context.WithTimeout(r.Context(), d)
 }
 
-// ---- Session & users -------------------------------------------------------------
+func ok(w http.ResponseWriter) { writeJSON(w, 200, map[string]bool{"ok": true}) }
 
-func sessionInfo(u *User) map[string]any {
-	return map[string]any{"authenticated": true, "user": u.Username, "role": u.Role, "perms": u.Perms(), "servers": u.Servers, "builtin": u.Builtin}
+// ---- Session, login, registration ------------------------------------------------
+
+func (a *API) sessionInfo(u *User) map[string]any {
+	role := a.auth.roleOf(u)
+	var sp []string
+	for _, p := range role.Perms {
+		if serverPerm[p] {
+			sp = append(sp, p)
+		}
+	}
+	h := a.m.store.Hosting()
+	return map[string]any{
+		"authenticated": true, "user": u.Username, "email": u.Email, "role": u.Role, "roleName": role.Name,
+		"perms": a.auth.GlobalPerms(u), "serverPerms": sp, "allServers": u.AllServers || u.Role == "admin",
+		"twofa": u.TOTP != "", "needs2fa": a.auth.Needs2FASetup(u), "recoveryLeft": len(u.Recovery),
+		"quota": u.Quota, "usage": a.m.Usage(u.Username, ""),
+		"hosting": map[string]any{"portMin": h.PortMin, "portMax": h.PortMax, "maxServerMB": h.MaxServerMB, "customerPublic": h.CustomerPublic},
+	}
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -259,17 +348,44 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	tok, u, ok := a.auth.Login(strings.TrimSpace(in.Username), in.Password)
-	if !ok {
-		time.Sleep(700 * time.Millisecond) // slow down brute force
-		log.Printf("Fehlgeschlagener Login für %q von %s", in.Username, clientIP(r))
-		a.auth.Audit(AuditEntry{Time: time.Now().Unix(), User: in.Username, Action: "LOGIN fehlgeschlagen", Status: 401, IP: clientIP(r)})
-		writeErr(w, &APIError{http.StatusUnauthorized, "Benutzername oder Passwort falsch"})
+	ip := clientIP(r)
+	res, err := a.auth.Login(in.Username, in.Password, ip, r.UserAgent())
+	if err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
+			time.Sleep(500 * time.Millisecond)
+			log.Printf("Fehlgeschlagener Login für %q von %s", in.Username, ip)
+			a.auth.Audit(AuditEntry{Time: time.Now().Unix(), User: in.Username, Action: "LOGIN fehlgeschlagen", Status: 401, IP: ip})
+		}
+		writeErr(w, err)
 		return
 	}
-	a.auth.Audit(AuditEntry{Time: time.Now().Unix(), User: u.Username, Action: "LOGIN", Status: 200, IP: clientIP(r)})
-	a.auth.setCookie(w, r, tok, int(a.auth.ttl.Seconds()))
-	writeJSON(w, 200, sessionInfo(u))
+	if res.Ticket != "" {
+		writeJSON(w, 200, map[string]any{"authenticated": false, "twofa": true, "ticket": res.Ticket})
+		return
+	}
+	a.loggedIn(w, r, res)
+}
+
+func (a *API) login2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Ticket, Code string }
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	res, err := a.auth.Login2FA(in.Ticket, in.Code, clientIP(r), r.UserAgent())
+	if err != nil {
+		time.Sleep(300 * time.Millisecond)
+		writeErr(w, err)
+		return
+	}
+	a.loggedIn(w, r, res)
+}
+
+func (a *API) loggedIn(w http.ResponseWriter, r *http.Request, res *LoginResult) {
+	a.auth.Audit(AuditEntry{Time: time.Now().Unix(), User: res.User.Username, Action: "LOGIN", Status: 200, IP: clientIP(r)})
+	a.auth.setCookie(w, r, res.Token, int(a.auth.ttl.Seconds()))
+	writeJSON(w, 200, a.sessionInfo(res.User))
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
@@ -281,10 +397,42 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 func (a *API) session(w http.ResponseWriter, r *http.Request) {
 	u := a.auth.User(r)
 	if u == nil {
-		writeJSON(w, 200, map[string]any{"authenticated": false})
+		writeJSON(w, 200, map[string]any{"authenticated": false, "registration": a.m.store.Hosting().Registration})
 		return
 	}
-	writeJSON(w, 200, sessionInfo(u))
+	writeJSON(w, 200, a.sessionInfo(u))
+}
+
+func (a *API) registerInfo(w http.ResponseWriter, r *http.Request) {
+	inv := a.auth.InviteFor(r.URL.Query().Get("invite"))
+	out := map[string]any{"open": a.openInvite() != nil, "invite": inv != nil}
+	if inv != nil {
+		if ro := a.auth.roles.Get(inv.Role); ro != nil {
+			out["roleName"] = ro.Name
+		}
+		out["note"] = inv.Note
+		out["expires"] = inv.Expires
+	}
+	writeJSON(w, 200, out)
+}
+
+func (a *API) register(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-CraftDock") != "1" {
+		writeErr(w, &APIError{http.StatusForbidden, "Fehlender CSRF-Header"})
+		return
+	}
+	var in struct{ Username, Password, Email, Invite string }
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	res, err := a.auth.Register(in.Username, in.Password, in.Email, in.Invite, a.openInvite(), clientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	a.auth.Audit(AuditEntry{Time: time.Now().Unix(), User: res.User.Username, Action: "REGISTER", Status: 200, IP: clientIP(r)})
+	a.loggedIn(w, r, res)
 }
 
 func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
@@ -293,15 +441,94 @@ func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := a.auth.SetOwnPassword(userFrom(r).Username, in.Old, in.New); err != nil {
+	if err := a.auth.SetOwnPassword(userFrom(r).Username, in.Old, in.New, sessionHashFrom(r)); err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	ok(w)
 }
 
+func (a *API) mySessions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.auth.Sessions(userFrom(r).Username, sessionHashFrom(r)))
+}
+
+func (a *API) revokeMySession(w http.ResponseWriter, r *http.Request) {
+	if err := a.auth.RevokeSession(userFrom(r).Username, r.PathValue("id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	ok(w)
+}
+
+func (a *API) revokeMyOthers(w http.ResponseWriter, r *http.Request) {
+	n := a.auth.RevokeAll(userFrom(r).Username, sessionHashFrom(r))
+	writeJSON(w, 200, map[string]int{"revoked": n})
+}
+
+func (a *API) setup2FA(w http.ResponseWriter, r *http.Request) {
+	secret, uri, err := a.auth.Begin2FA(userFrom(r).Username)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	q, err := qrEncode(uri)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"secret": secret, "uri": uri, "qr": q.SVG()})
+}
+
+func (a *API) confirm2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Code string }
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	codes, err := a.auth.Confirm2FA(userFrom(r).Username, in.Code, sessionHashFrom(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"recovery": codes})
+}
+
+func (a *API) disable2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Password, Code string }
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := a.auth.Disable2FA(userFrom(r).Username, in.Password, in.Code); err != nil {
+		writeErr(w, err)
+		return
+	}
+	ok(w)
+}
+
+func (a *API) recovery2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Password string }
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	codes, err := a.auth.NewRecoveryCodes(userFrom(r).Username, in.Password)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"recovery": codes})
+}
+
+// ---- Users, roles, invitations -------------------------------------------------------
+
 func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"users": a.auth.List(), "roles": rolePerms})
+	users := a.auth.List()
+	usage := map[string]Usage{}
+	for _, u := range users {
+		usage[u.Username] = a.m.Usage(u.Username, "")
+	}
+	writeJSON(w, 200, map[string]any{"users": users, "usage": usage, "roles": a.auth.roles.List(), "perms": permCatalog})
 }
 
 func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +537,7 @@ func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := a.auth.Create(in); err != nil {
+	if err := a.auth.Create(in, userFrom(r)); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -323,40 +550,137 @@ func (a *API) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := a.auth.Update(r.PathValue("username"), in); err != nil {
+	if err := a.auth.Update(r.PathValue("username"), in, userFrom(r)); err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	ok(w)
 }
 
 func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
-	if r.PathValue("username") == userFrom(r).Username {
+	name := r.PathValue("username")
+	if name == userFrom(r).Username {
 		writeErr(w, badRequest("Du kannst dich nicht selbst löschen"))
 		return
 	}
-	if err := a.auth.Delete(r.PathValue("username")); err != nil {
+	for _, c := range a.m.store.Configs() {
+		if c.Owner == name {
+			writeErr(w, conflict("„%s“ besitzt noch Server (z. B. %s) – bitte zuerst löschen oder übertragen", name, c.Name))
+			return
+		}
+	}
+	if err := a.auth.Delete(name, userFrom(r)); err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	ok(w)
+}
+
+func (a *API) resetUser2FA(w http.ResponseWriter, r *http.Request) {
+	if err := a.auth.Reset2FA(r.PathValue("username"), userFrom(r)); err != nil {
+		writeErr(w, err)
+		return
+	}
+	ok(w)
+}
+
+func (a *API) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	target := a.auth.Get(r.PathValue("username"))
+	if target == nil {
+		writeErr(w, ErrUserNotFound)
+		return
+	}
+	if !a.auth.roleWithin(userFrom(r), target.Role) {
+		writeErr(w, &APIError{http.StatusForbidden, "Dieser Benutzer hat mehr Rechte als du"})
+		return
+	}
+	keep := ""
+	if target.Username == userFrom(r).Username {
+		keep = sessionHashFrom(r)
+	}
+	writeJSON(w, 200, map[string]int{"revoked": a.auth.RevokeAll(target.Username, keep)})
+}
+
+func (a *API) listInvites(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.auth.Invites())
+}
+
+func (a *API) createInvite(w http.ResponseWriter, r *http.Request) {
+	var in InviteInput
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	tok, inv, err := a.auth.CreateInvite(in, userFrom(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	link := "/admin/#register=" + tok
+	if base := a.m.store.Hosting().PanelURL; base != "" {
+		link = base + link
+	}
+	inv.Hash = ""
+	writeJSON(w, 201, map[string]any{"invite": inv, "token": tok, "link": link})
+}
+
+func (a *API) deleteInvite(w http.ResponseWriter, r *http.Request) {
+	if err := a.auth.DeleteInvite(r.PathValue("id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	ok(w)
+}
+
+func (a *API) listRoles(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"roles": a.auth.roles.List(), "perms": permCatalog})
+}
+
+func (a *API) saveRole(w http.ResponseWriter, r *http.Request, create bool) {
+	var in Role
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !create {
+		in.ID = r.PathValue("id")
+	}
+	ro, err := a.auth.roles.Save(in, create, a.auth.grantableBy(userFrom(r)))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, 200, ro)
+}
+
+func (a *API) createRole(w http.ResponseWriter, r *http.Request) { a.saveRole(w, r, true) }
+func (a *API) updateRole(w http.ResponseWriter, r *http.Request) { a.saveRole(w, r, false) }
+
+func (a *API) deleteRole(w http.ResponseWriter, r *http.Request) {
+	if err := a.auth.roles.Delete(r.PathValue("id"), a.auth.RoleInUse); err != nil {
+		writeErr(w, err)
+		return
+	}
+	ok(w)
 }
 
 func (a *API) auditLog(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, a.auth.AuditLog(300))
+	writeJSON(w, 200, a.auth.AuditLog(500, r.URL.Query().Get("user")))
 }
 
-// ---- Handlers -------------------------------------------------------------------
+// ---- Servers --------------------------------------------------------------------
 
 func (a *API) info(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := ctxT(r, 5*time.Second)
 	defer cancel()
 	info, err := a.m.d.Info(ctx)
 	out := map[string]any{"version": appVersion, "dockerOk": err == nil}
-	if err != nil {
-		out["dockerError"] = err.Error()
-	} else {
-		out["docker"] = info
+	if a.auth.Can(userFrom(r), PermSettings) { // host details only for administrators
+		if err != nil {
+			out["dockerError"] = err.Error()
+		} else {
+			out["docker"] = info
+		}
 	}
 	writeJSON(w, 200, out)
 }
@@ -383,7 +707,9 @@ func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	out := list[:0]
 	for _, s := range list {
-		if u.CanServer(s.Name) {
+		if perms := a.auth.ServerPerms(u, s.Name); len(perms) > 0 {
+			s.Perms = perms
+			s.Maintenance = a.alerts.MaintenanceUntil(s.Name)
 			out = append(out, s)
 		}
 	}
@@ -398,14 +724,12 @@ func (a *API) getServer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	d.Perms = a.auth.ServerPerms(userFrom(r), d.Name)
+	d.Maintenance = a.alerts.MaintenanceUntil(d.Name)
 	writeJSON(w, 200, d)
 }
 
 func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
-	if len(userFrom(r).Servers) > 0 {
-		writeErr(w, &APIError{http.StatusForbidden, "Benutzer mit Server-Beschränkung können keine Server anlegen"})
-		return
-	}
 	var cfg ServerConfig
 	if err := readJSON(r, &cfg); err != nil {
 		writeErr(w, err)
@@ -413,6 +737,10 @@ func (a *API) createServer(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := ctxT(r, 15*time.Second)
 	defer cancel()
+	if err := a.applyPolicy(ctx, a.policyFor(userFrom(r), ""), &cfg, nil); err != nil {
+		writeErr(w, err)
+		return
+	}
 	if err := a.m.Create(ctx, cfg); err != nil {
 		writeErr(w, err)
 		return
@@ -428,7 +756,17 @@ func (a *API) updateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := ctxT(r, 15*time.Second)
 	defer cancel()
-	if err := a.m.Update(ctx, r.PathValue("name"), cfg); err != nil {
+	name := r.PathValue("name")
+	old, err := a.m.Config(ctx, name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := a.applyPolicy(ctx, a.policyFor(userFrom(r), name), &cfg, &old); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := a.m.Update(ctx, name, cfg); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -466,6 +804,10 @@ func (a *API) command(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
+		return
+	}
+	if !roleFrom(r).AllowsCommand(in.Command) {
+		writeErr(w, &APIError{http.StatusForbidden, "Dieser Befehl ist für deine Rolle gesperrt"})
 		return
 	}
 	ctx, cancel := ctxT(r, 30*time.Second)

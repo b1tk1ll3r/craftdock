@@ -7,6 +7,7 @@
   <title>CraftDock</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 29 9.5v13L16 30 3 22.5v-13z' fill='%234cc38a'/%3E%3Cpath d='M16 16 3 9.5M16 16l13-6.5M16 16v14' stroke='%230b0e13' stroke-width='2'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="app.css">
+  <script src="access.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -16,11 +17,25 @@
     <form id="loginForm" class="login-card" autocomplete="on">
       <div class="brand brand-lg"><span class="logo"></span><span>CraftDock</span></div>
       <p class="muted">Minecraft-Server auf Docker verwalten</p>
-      <label class="field"><span>Benutzername</span><input name="username" autocomplete="username" required value="admin"></label>
+      <label class="field"><span>Benutzername</span><input name="username" autocomplete="username" required></label>
       <label class="field"><span>Passwort</span><input name="password" type="password" autocomplete="current-password" required autofocus></label>
       <div id="loginError" class="form-error hidden"></div>
       <button class="btn primary block" type="submit">Anmelden</button>
+      <a href="#" id="regLink" class="reg-link hidden">Noch kein Konto? Registrieren</a>
     </form>
+    <form id="twofaForm" class="login-card hidden" autocomplete="off">
+      <div class="brand brand-lg"><span class="logo"></span><span>CraftDock</span></div>
+      <h2 class="reg-h">Bestätigungscode</h2>
+      <p class="muted">Gib den 6-stelligen Code aus deiner Authenticator-App ein – oder einen Wiederherstellungscode.</p>
+      <label class="field"><span>Code</span><input name="code" class="code-in" autocomplete="one-time-code" required maxlength="12" spellcheck="false" placeholder="123 456"></label>
+      <div id="twofaError" class="form-error hidden"></div>
+      <button class="btn primary block" type="submit">Bestätigen</button>
+      <button class="btn ghost block" type="button" id="twofaBack">Zurück</button>
+    </form>
+  </div>
+
+  <div id="register" class="login hidden">
+    <form class="login-card" autocomplete="on"></form>
   </div>
 
   <div id="app" class="app hidden">

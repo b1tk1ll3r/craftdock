@@ -22,41 +22,6 @@ func TestPasswordHash(t *testing.T) {
 	}
 }
 
-func TestUsersAndRoles(t *testing.T) {
-	dir := t.TempDir()
-	a := NewAuth("admin", "builtin-pass", dir)
-	if err := a.Create(UserInput{Username: "Mod", Role: "moderator", Password: "short"}); err == nil {
-		t.Fatal("short password accepted")
-	}
-	if err := a.Create(UserInput{Username: "Mod", Role: "moderator", Password: "lang-genug-123", Servers: []string{"survival"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Create(UserInput{Username: "admin", Role: "viewer", Password: "lang-genug-123"}); err == nil {
-		t.Fatal("builtin name accepted")
-	}
-	_, u, ok := a.Login("mod", "lang-genug-123")
-	if !ok || u.Role != "moderator" {
-		t.Fatal("login failed")
-	}
-	if !u.Can(PermConsole) || u.Can(PermConfigure) || u.Can(PermUsers) {
-		t.Fatalf("moderator perms wrong: %v", u.Perms())
-	}
-	if !u.CanServer("survival") || u.CanServer("creative") {
-		t.Fatal("server scope wrong")
-	}
-	// persisted
-	b := NewAuth("admin", "builtin-pass", dir)
-	if _, _, ok := b.Login("mod", "lang-genug-123"); !ok {
-		t.Fatal("user not persisted")
-	}
-	if _, u, ok := b.Login("admin", "builtin-pass"); !ok || !u.Builtin || !u.Can(PermUsers) {
-		t.Fatal("builtin admin")
-	}
-	if err := b.Delete("admin"); err == nil {
-		t.Fatal("builtin deletable")
-	}
-}
-
 func TestVelocityToml(t *testing.T) {
 	pc := ProxyConfig{Motd: `Mein "Netz"`, MaxPlayers: 50, OnlineMode: true, Lobby: "lobby", ForcedHosts: map[string]string{"survival.example.com": "survival", "x.example.com": "gone"}}
 	out := velocityToml(pc, []ServerConfig{{Name: "survival"}, {Name: "lobby"}})

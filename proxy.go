@@ -432,6 +432,15 @@ show-plugins = false
 }
 
 func (m *Manager) proxySpec(pc ProxyConfig) map[string]any {
+	host := map[string]any{
+		"PortBindings":  map[string][]map[string]string{"25577/tcp": {{"HostPort": strconv.Itoa(pc.Port)}}},
+		"Binds":         []string{proxyVolumeName(pc.ID) + ":/server"},
+		"RestartPolicy": map[string]any{"Name": "unless-stopped"},
+		"NetworkMode":   m.network,
+	}
+	if lc := logConfig(); lc != nil {
+		host["LogConfig"] = lc
+	}
 	return map[string]any{
 		"Image":        proxyImage,
 		"Env":          []string{"TYPE=VELOCITY", "MEMORY=" + pc.Memory, "TZ=" + envOr("TZ", "UTC")},
@@ -439,12 +448,7 @@ func (m *Manager) proxySpec(pc ProxyConfig) map[string]any {
 		"OpenStdin":    true,
 		"ExposedPorts": map[string]struct{}{"25577/tcp": {}},
 		"Labels":       map[string]string{labelProxy: "true", labelProxyID: pc.ID, labelProxyCfg: mustJSON(pc)},
-		"HostConfig": map[string]any{
-			"PortBindings":  map[string][]map[string]string{"25577/tcp": {{"HostPort": strconv.Itoa(pc.Port)}}},
-			"Binds":         []string{proxyVolumeName(pc.ID) + ":/server"},
-			"RestartPolicy": map[string]any{"Name": "unless-stopped"},
-			"NetworkMode":   m.network,
-		},
+		"HostConfig":   host,
 	}
 }
 
@@ -555,6 +559,9 @@ func (m *Manager) ProxyAction(ctx context.Context, id, action string) error {
 	if err != nil {
 		return err
 	}
+	if action == "stop" || action == "restart" || action == "delete" {
+		m.markIntent(proxyTaskKey(id))
+	}
 	if action == "delete" {
 		all, _, err := m.members(ctx)
 		if err != nil {
@@ -643,12 +650,12 @@ func (a *API) getProxies(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	// Users restricted to some servers only see networks those servers are in.
-	if u := userFrom(r); len(u.Servers) > 0 {
+	// Users without network rights only see networks their servers are in.
+	if u := userFrom(r); !a.auth.Can(u, PermNetworks) {
 		keep := v.Networks[:0]
 		for _, n := range v.Networks {
 			for _, s := range n.Members {
-				if u.CanServer(s) {
+				if a.auth.CanServer(u, s, PermView) {
 					keep = append(keep, n)
 					break
 				}
@@ -657,7 +664,7 @@ func (a *API) getProxies(w http.ResponseWriter, r *http.Request) {
 		v.Networks = keep
 		srv := v.Servers[:0]
 		for _, s := range v.Servers {
-			if u.CanServer(s.Name) {
+			if a.auth.CanServer(u, s.Name, PermView) {
 				srv = append(srv, s)
 			}
 		}

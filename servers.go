@@ -93,6 +93,7 @@ type ServerConfig struct {
 	ExtraEnv         map[string]string `json:"extraEnv"`
 	Ports            []PortMapping     `json:"ports"`
 	RconPassword     string            `json:"rconPassword,omitempty"`
+	Owner            string            `json:"owner,omitempty"` // username of the customer owning the server
 	CreatedAt        time.Time         `json:"createdAt"`
 }
 
@@ -501,6 +502,9 @@ type ServerView struct {
 	CFKeySet    bool         `json:"cfKeySet,omitempty"`
 	GameVersion string       `json:"gameVersion,omitempty"` // running Minecraft version, if known
 	Sleeping    bool         `json:"sleeping,omitempty"`
+	Missing     bool         `json:"missing,omitempty"`     // container gone, configuration still known
+	Maintenance int64        `json:"maintenance,omitempty"` // alerts muted until (unix)
+	Perms       []string     `json:"perms,omitempty"`       // effective permissions of the requesting user
 }
 
 type ServerDetail struct {
@@ -536,6 +540,28 @@ type Manager struct {
 	verMu    sync.Mutex
 	versions *versionList
 	verTime  time.Time
+
+	intentMu sync.Mutex
+	intent   map[string]time.Time // last deliberate stop/restart per server (alerting)
+
+	OnTaskFailed func(name, action string, err error)
+}
+
+// markIntent records that a server is stopped or restarted on purpose, so the
+// alerting does not report it as an outage.
+func (m *Manager) markIntent(name string) {
+	m.intentMu.Lock()
+	defer m.intentMu.Unlock()
+	if m.intent == nil {
+		m.intent = map[string]time.Time{}
+	}
+	m.intent[name] = time.Now()
+}
+
+func (m *Manager) intentSince(name string) time.Time {
+	m.intentMu.Lock()
+	defer m.intentMu.Unlock()
+	return m.intent[name]
 }
 
 func NewManager(d *Docker, network string, store *Store) *Manager {
@@ -567,6 +593,9 @@ func (m *Manager) startTask(name, action, msg string, pending *ServerConfig, fn 
 		if err != nil {
 			t.Error = err.Error()
 			log.Printf("[%s] %s fehlgeschlagen: %v", name, action, err)
+			if m.OnTaskFailed != nil {
+				go m.OnTaskFailed(name, action, err)
+			}
 		} else {
 			log.Printf("[%s] %s abgeschlossen", name, action)
 			if m.tasks[name] == t {
@@ -621,6 +650,9 @@ func publicConfig(c ServerConfig) ServerConfig {
 
 func (m *Manager) view(c ContainerSummary) ServerView {
 	cfg := configFromLabels(c.Labels)
+	if cfg.Name != "" && cfg.RconPassword != "" {
+		m.store.SaveConfig(cfg) // keep the mirror in sync (also for servers from older versions)
+	}
 	v := ServerView{
 		Name: cfg.Name, Config: publicConfig(cfg), ContainerID: c.ID, Image: c.Image,
 		State: c.State, StatusText: c.Status, Task: m.task(cfg.Name), CFKeySet: cfg.cfKey() != "",
@@ -644,9 +676,19 @@ func (m *Manager) view(c ContainerSummary) ServerView {
 	return v
 }
 
+func (m *Manager) missingView(cfg ServerConfig) ServerView {
+	v := ServerView{Name: cfg.Name, Config: publicConfig(cfg), Task: m.task(cfg.Name), Missing: true, State: "missing",
+		GameVersion: m.knownVersion(cfg), CFKeySet: cfg.cfKey() != ""}
+	v.Phase = phase(v)
+	return v
+}
+
 func phase(v ServerView) string {
 	if v.Task != nil && v.Task.Running {
 		return "busy"
+	}
+	if v.Missing {
+		return "missing"
 	}
 	switch v.State {
 	case "running":
@@ -694,7 +736,14 @@ func (m *Manager) List(ctx context.Context) ([]ServerView, error) {
 	for _, cfg := range pending {
 		v := ServerView{Name: cfg.Name, Config: publicConfig(*cfg), Task: m.task(cfg.Name)}
 		v.Phase = phase(v)
+		seen[cfg.Name] = true
 		out = append(out, v)
+	}
+	// Configurations whose container vanished (removed outside CraftDock).
+	for _, cfg := range m.store.Configs() {
+		if !seen[cfg.Name] {
+			out = append(out, m.missingView(cfg))
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
@@ -806,6 +855,9 @@ func (m *Manager) spec(cfg ServerConfig) map[string]any {
 	if m.network != "" {
 		host["NetworkMode"] = m.network
 	}
+	if lc := logConfig(); lc != nil {
+		host["LogConfig"] = lc
+	}
 	return map[string]any{
 		"Image":        cfg.Image(),
 		"Env":          cfg.Env(),
@@ -819,6 +871,73 @@ func (m *Manager) spec(cfg ServerConfig) map[string]any {
 		},
 		"HostConfig": host,
 	}
+}
+
+// logConfig limits the size of container logs (json-file driver), which
+// otherwise grow without bound. CRAFTDOCK_LOG_MAX_SIZE=off keeps Docker's default.
+func logConfig() map[string]any {
+	size := envOr("CRAFTDOCK_LOG_MAX_SIZE", "20m")
+	if size == "off" {
+		return nil
+	}
+	return map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": size, "max-file": envOr("CRAFTDOCK_LOG_MAX_FILE", "5")}}
+}
+
+// createServerContainer creates the container and mirrors its configuration.
+func (m *Manager) createServerContainer(ctx context.Context, cfg ServerConfig) (string, error) {
+	id, err := m.d.CreateContainer(ctx, containerName(cfg.Name), m.spec(cfg))
+	if err == nil {
+		m.store.SaveConfig(cfg)
+	}
+	return id, err
+}
+
+// Config returns the stored configuration of a server (container label first).
+func (m *Manager) Config(ctx context.Context, name string) (ServerConfig, error) {
+	c, err := m.find(ctx, name)
+	if err == nil {
+		return configFromLabels(c.Labels), nil
+	}
+	if errors.Is(err, ErrServerNotFound) {
+		if cfg, ok := m.store.Config(name); ok {
+			return cfg, nil
+		}
+	}
+	return ServerConfig{}, err
+}
+
+// Restore recreates the container of a server whose container is missing.
+func (m *Manager) Restore(ctx context.Context, name string, start bool) error {
+	if _, err := m.find(ctx, name); err == nil {
+		return conflict("Der Container von „%s“ existiert bereits", name)
+	}
+	cfg, ok := m.store.Config(name)
+	if !ok {
+		return ErrServerNotFound
+	}
+	if _, err := m.d.Inspect(ctx, containerName(cfg.Name)); err == nil {
+		return conflict("Es existiert bereits ein fremder Container „%s“", containerName(cfg.Name))
+	}
+	if err := m.checkPorts(ctx, cfg); err != nil {
+		return err
+	}
+	return m.startTask(name, "restore", "Wird wiederhergestellt …", nil, func(ctx context.Context, p func(string)) error {
+		if err := m.ensureImage(ctx, cfg.Image(), p); err != nil {
+			return err
+		}
+		p("Container wird erstellt …")
+		id, err := m.createServerContainer(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		if cfg.Network != "" {
+			defer m.refreshProxyAsync(cfg.Network)
+		}
+		if !start {
+			return nil
+		}
+		return m.startContainer(ctx, id, false, cfg, p)
+	})
 }
 
 func (m *Manager) ensureImage(ctx context.Context, ref string, p func(string)) error {
@@ -861,7 +980,7 @@ func (m *Manager) Create(ctx context.Context, cfg ServerConfig) error {
 			return err
 		}
 		p("Container wird erstellt …")
-		id, err := m.d.CreateContainer(ctx, containerName(cfg.Name), m.spec(cfg))
+		id, err := m.createServerContainer(ctx, cfg)
 		if err != nil {
 			return err
 		}
@@ -945,6 +1064,7 @@ func (m *Manager) replaceContainer(ctx context.Context, id string, old, cfg Serv
 	if err != nil {
 		return "", err
 	}
+	m.markIntent(cfg.Name)
 	if ins.State.Running {
 		p("Server wird gestoppt (Welt wird gespeichert) …")
 		if err := m.d.Stop(ctx, id, stopTimeout); err != nil {
@@ -955,10 +1075,10 @@ func (m *Manager) replaceContainer(ctx context.Context, id string, old, cfg Serv
 	if err := m.d.Remove(ctx, id); err != nil {
 		return "", err
 	}
-	newID, err := m.d.CreateContainer(ctx, containerName(cfg.Name), m.spec(cfg))
+	newID, err := m.createServerContainer(ctx, cfg)
 	if err != nil {
 		// Roll back so the server does not disappear.
-		if oldID, rbErr := m.d.CreateContainer(ctx, containerName(cfg.Name), m.spec(old)); rbErr == nil && ins.State.Running && restart {
+		if oldID, rbErr := m.createServerContainer(ctx, old); rbErr == nil && ins.State.Running && restart {
 			_ = m.startContainer(ctx, oldID, false, old, p)
 		}
 		return "", fmt.Errorf("neue Konfiguration abgelehnt, alte wiederhergestellt: %w", err)
@@ -973,20 +1093,34 @@ func (m *Manager) replaceContainer(ctx context.Context, id string, old, cfg Serv
 }
 
 func (m *Manager) Delete(ctx context.Context, name string, removeData bool) error {
+	var cfg ServerConfig
+	var id string
+	var running bool
 	c, err := m.find(ctx, name)
-	if err != nil {
+	switch {
+	case err == nil:
+		cfg, id, running = configFromLabels(c.Labels), c.ID, c.State == "running"
+	case errors.Is(err, ErrServerNotFound):
+		stored, ok := m.store.Config(name)
+		if !ok {
+			return err
+		}
+		cfg = stored
+	default:
 		return err
 	}
-	cfg := configFromLabels(c.Labels)
-	id, running := c.ID, c.State == "running"
+	m.markIntent(name)
 	return m.startTask(name, "delete", "Server wird gelöscht …", nil, func(ctx context.Context, p func(string)) error {
 		if running {
 			p("Server wird gestoppt …")
 			_ = m.d.Stop(ctx, id, stopTimeout)
 		}
-		if err := m.d.Remove(ctx, id); err != nil && !IsNotFound(err) {
-			return err
+		if id != "" {
+			if err := m.d.Remove(ctx, id); err != nil && !IsNotFound(err) {
+				return err
+			}
 		}
+		m.store.DeleteConfig(name)
 		if cfg.Network != "" {
 			m.refreshProxyAsync(cfg.Network)
 		}
@@ -1001,9 +1135,15 @@ func (m *Manager) Delete(ctx context.Context, name string, removeData bool) erro
 }
 
 func (m *Manager) Action(ctx context.Context, name, action string) error {
+	if action == "restore" {
+		return m.Restore(ctx, name, true)
+	}
 	c, err := m.find(ctx, name)
 	if err != nil {
 		return err
+	}
+	if action == "stop" || action == "restart" {
+		m.markIntent(name)
 	}
 	id := c.ID
 	cfg := configFromLabels(c.Labels)

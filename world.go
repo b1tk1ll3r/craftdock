@@ -36,7 +36,7 @@ type CloneInput struct {
 	Start    bool   `json:"start"`
 }
 
-func (m *Manager) Clone(ctx context.Context, src string, in CloneInput) error {
+func (m *Manager) Clone(ctx context.Context, src string, in CloneInput, policy func(*ServerConfig) error) error {
 	c, err := m.find(ctx, src)
 	if err != nil {
 		return err
@@ -58,6 +58,11 @@ func (m *Manager) Clone(ctx context.Context, src string, in CloneInput) error {
 	cfg.DisplayName = base + " (Kopie)"
 	if len(cfg.DisplayName) > 48 {
 		cfg.DisplayName = cfg.DisplayName[:48]
+	}
+	if policy != nil {
+		if err := policy(&cfg); err != nil {
+			return err
+		}
 	}
 	cfg.Normalize()
 	if err := cfg.Validate(); err != nil {
@@ -95,7 +100,7 @@ func (m *Manager) Clone(ctx context.Context, src string, in CloneInput) error {
 			}
 		}
 		p("Container wird erstellt …")
-		id, err := m.d.CreateContainer(ctx, containerName(cfg.Name), m.spec(cfg))
+		id, err := m.createServerContainer(ctx, cfg)
 		if err != nil {
 			return err
 		}
@@ -107,8 +112,9 @@ func (m *Manager) Clone(ctx context.Context, src string, in CloneInput) error {
 }
 
 func (a *API) cloneServer(w http.ResponseWriter, r *http.Request) {
-	if len(userFrom(r).Servers) > 0 {
-		writeErr(w, &APIError{http.StatusForbidden, "Benutzer mit Server-Beschränkung können keine Server anlegen"})
+	u := userFrom(r)
+	if !roleFrom(r).Has(PermConfigure) {
+		writeErr(w, &APIError{http.StatusForbidden, "Zum Klonen brauchst du Konfigurationsrechte auf dem Quellserver"})
 		return
 	}
 	var in CloneInput
@@ -118,7 +124,10 @@ func (a *API) cloneServer(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := ctxT(r, 15*time.Second)
 	defer cancel()
-	if err := a.m.Clone(ctx, r.PathValue("name"), in); err != nil {
+	policy := func(cfg *ServerConfig) error {
+		return a.applyPolicy(ctx, a.policyFor(u, ""), cfg, nil)
+	}
+	if err := a.m.Clone(ctx, r.PathValue("name"), in, policy); err != nil {
 		writeErr(w, err)
 		return
 	}

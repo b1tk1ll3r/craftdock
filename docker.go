@@ -132,10 +132,11 @@ type ContainerSummary struct {
 }
 
 type ContainerInspect struct {
-	ID      string `json:"Id"`
-	Name    string `json:"Name"`
-	Created string `json:"Created"`
-	State   struct {
+	ID           string `json:"Id"`
+	Name         string `json:"Name"`
+	Created      string `json:"Created"`
+	RestartCount int    `json:"RestartCount"`
+	State        struct {
 		Status     string `json:"Status"`
 		Running    bool   `json:"Running"`
 		StartedAt  string `json:"StartedAt"`

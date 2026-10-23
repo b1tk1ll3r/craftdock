@@ -109,6 +109,10 @@ func (a *API) playerAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if need := playerActionPerm(in.Action); !roleFrom(r).Has(need) {
+		writeErr(w, &APIError{http.StatusForbidden, "Dafür fehlt dir die Berechtigung (" + permKnown[need].Label + ")"})
+		return
+	}
 	ctx, cancel := ctxT(r, 20*time.Second)
 	defer cancel()
 	out, err := a.m.PlayerAction(ctx, r.PathValue("name"), in)
@@ -128,4 +132,14 @@ func (a *API) playerInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, info)
+}
+
+// playerActionPerm: interventions into the game need players.cheat,
+// moderation needs players.manage.
+func playerActionPerm(action string) string {
+	switch action {
+	case "give", "tp-to", "tp-here", "tp-coords", "gamemode", "effect", "effect-clear", "heal", "xp", "clear", "kill":
+		return PermCheats
+	}
+	return PermPlayers
 }
